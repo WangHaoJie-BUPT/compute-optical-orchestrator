@@ -1,3 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: grafana-data
+  namespace: observability
+
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+  resources:
+    requests:
+      storage: 1Gi
+
+---
 apiVersion: apps/v1
 kind: Deployment
 
@@ -105,7 +121,8 @@ spec:
 
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: grafana-data
 
         - name: provisioning
           configMap:
