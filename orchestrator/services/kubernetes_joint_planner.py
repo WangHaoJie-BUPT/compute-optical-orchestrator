@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import logging
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from orchestrator.adapters.gnpy_adapter import (
@@ -34,6 +36,9 @@ from orchestrator.state.optical_resource_manager import (
     OpticalResourceManager,
     OpticalResourceManagerError,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -159,6 +164,30 @@ class KubernetesJointPlanner:
             topology_file=topology_file,
             equipment_file=equipment_file,
         )
+
+        for candidate in candidates:
+            selectable = (
+                candidate.feasible
+                and candidate.spectrum_slot is not None
+                and candidate.gsnr_db is not None
+                and candidate.total_score is not None
+            )
+            log_candidate = (
+                logger.info
+                if selectable
+                else logger.warning
+            )
+            log_candidate(
+                "joint-planner candidate task_id=%s "
+                "candidate=%s",
+                task.task_id,
+                json.dumps(
+                    asdict(candidate),
+                    default=str,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            )
 
         feasible = [
             candidate
@@ -464,6 +493,13 @@ class KubernetesJointPlanner:
             GNPySpectrumParserError,
             OpticalResourceManagerError,
         ) as exc:
+            logger.exception(
+                "joint-planner site evaluation failed "
+                "task_id=%s site_id=%s node_name=%s",
+                task.task_id,
+                site.site_id,
+                site.node_name,
+            )
             return self._failed_plan(
                 site,
                 str(exc),
