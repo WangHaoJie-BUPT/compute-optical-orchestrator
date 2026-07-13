@@ -1,0 +1,119 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compute-optical-orchestrator
+  namespace: orchestrator-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: compute-optical-orchestrator
+  template:
+    metadata:
+      labels:
+        app: compute-optical-orchestrator
+    spec:
+      serviceAccountName: compute-optical-orchestrator
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: orchestrator
+        image: compute-optical-orchestrator:dev-incluster-v5
+        imagePullPolicy: Never
+        command:
+        - /app/scripts/container_entrypoint.sh
+        args:
+        - python
+        - scripts/run_runtime_api.py
+        - --database
+        - /data/runtime-orchestrator.db
+        - --host
+        - 0.0.0.0
+        - --port
+        - '8000'
+        - --metrics-host
+        - 0.0.0.0
+        - --metrics-port
+        - '9100'
+        - --controller-interval
+        - '2'
+        env:
+        - name: COMPUTE_OPTICAL_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: compute-optical-api-key
+              key: api-key
+        - name: KUBERNETES_CLIENT_MODE
+          value: incluster
+        - name: KUBERNETES_CONTEXT_NAME
+          value: kind-compute-optical
+        - name: KUBERNETES_RUNTIME_NAMESPACE
+          value: compute-optical
+        - name: KUBERNETES_NAMESPACE_MANAGEMENT
+          value: external
+        ports:
+        - name: api
+          containerPort: 8000
+        - name: metrics
+          containerPort: 9100
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: api
+          periodSeconds: 5
+          failureThreshold: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: api
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: api
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+        volumeMounts:
+        - name: runtime-data
+          mountPath: /data
+      volumes:
+      - name: runtime-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compute-optical-orchestrator-api
+  namespace: orchestrator-system
+spec:
+  selector:
+    app: compute-optical-orchestrator
+  ports:
+  - name: api
+    port: 8000
+    targetPort: api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: compute-optical-orchestrator-metrics
+  namespace: orchestrator-system
+spec:
+  selector:
+    app: compute-optical-orchestrator
+  ports:
+  - name: metrics
+    port: 9100
+    targetPort: metrics

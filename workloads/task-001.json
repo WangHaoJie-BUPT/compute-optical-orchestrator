@@ -1,0 +1,8 @@
+{
+  "task_id": "task-001",
+  "source_access_node": "trx Lorient_KMA",
+  "cpu_required": 8,
+  "memory_gb_required": 16,
+  "gpu_required": 0,
+  "bandwidth_gbps": 100
+}

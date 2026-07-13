@@ -1,0 +1,17 @@
+{
+  "task_id": "dynamic-k8s-task-001",
+  "source_access_node": "trx Lorient_KMA",
+
+  "cpu_request_m": 500,
+  "memory_request_mib": 256,
+  "gpu_request": 0,
+
+  "cpu_limit_m": 1000,
+  "memory_limit_mib": 512,
+
+  "bandwidth_gbps": 100,
+
+  "image": "busybox:1.36",
+
+  "shell_command": "set -eu\necho \"Dynamic compute-optical task started\"\necho \"Task ID: ${TASK_ID}\"\necho \"Pod: ${POD_NAME}\"\necho \"Node: ${NODE_NAME}\"\necho \"Selected site: ${EXPECTED_SITE_ID}\"\nsleep 10\necho \"Dynamic compute-optical task completed\""
+}

@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ServiceAccount
+
+metadata:
+  name: compute-optical-orchestrator
+  namespace: orchestrator-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+
+metadata:
+  name: compute-optical-node-reader
+
+rules:
+  - apiGroups:
+      - ""
+
+    resources:
+      - nodes
+
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+
+metadata:
+  name: compute-optical-node-reader
+
+subjects:
+  - kind: ServiceAccount
+    name: compute-optical-orchestrator
+    namespace: orchestrator-system
+
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: compute-optical-node-reader
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+
+metadata:
+  name: compute-optical-runtime-manager
+  namespace: compute-optical
+
+rules:
+  - apiGroups:
+      - batch
+
+    resources:
+      - jobs
+
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+
+  - apiGroups:
+      - ""
+
+    resources:
+      - pods
+
+    verbs:
+      - get
+      - list
+      - watch
+
+  - apiGroups:
+      - ""
+
+    resources:
+      - pods/log
+
+    verbs:
+      - get
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+
+metadata:
+  name: compute-optical-runtime-manager
+  namespace: compute-optical
+
+subjects:
+  - kind: ServiceAccount
+    name: compute-optical-orchestrator
+    namespace: orchestrator-system
+
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: compute-optical-runtime-manager

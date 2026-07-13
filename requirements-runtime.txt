@@ -1,0 +1,4 @@
+fastapi==0.139.0
+uvicorn==0.51.0
+prometheus-client==0.25.0
+kubernetes==36.0.2

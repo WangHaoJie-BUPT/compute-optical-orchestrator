@@ -1,0 +1,36 @@
+{
+  "tasks": [
+    {
+      "task_id": "task-001",
+      "source_access_node": "trx Lorient_KMA",
+      "cpu_required": 8,
+      "memory_gb_required": 16,
+      "gpu_required": 0,
+      "bandwidth_gbps": 100
+    },
+    {
+      "task_id": "task-002",
+      "source_access_node": "trx Lorient_KMA",
+      "cpu_required": 20,
+      "memory_gb_required": 64,
+      "gpu_required": 1,
+      "bandwidth_gbps": 200
+    },
+    {
+      "task_id": "task-003",
+      "source_access_node": "trx Lorient_KMA",
+      "cpu_required": 16,
+      "memory_gb_required": 64,
+      "gpu_required": 1,
+      "bandwidth_gbps": 100
+    },
+    {
+      "task_id": "task-004",
+      "source_access_node": "trx Lorient_KMA",
+      "cpu_required": 16,
+      "memory_gb_required": 64,
+      "gpu_required": 1,
+      "bandwidth_gbps": 100
+    }
+  ]
+}

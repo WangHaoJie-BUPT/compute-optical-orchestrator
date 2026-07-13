@@ -1,0 +1,34 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+
+metadata:
+  name: compute-optical-cluster-pod-reader
+
+rules:
+  - apiGroups:
+      - ""
+
+    resources:
+      - pods
+
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+
+metadata:
+  name: compute-optical-cluster-pod-reader
+
+subjects:
+  - kind: ServiceAccount
+    name: compute-optical-orchestrator
+    namespace: orchestrator-system
+
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: compute-optical-cluster-pod-reader

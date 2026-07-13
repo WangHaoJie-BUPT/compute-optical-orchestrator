@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: grafana
+  namespace: observability
+
+spec:
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: grafana
+
+  template:
+    metadata:
+      labels:
+        app: grafana
+
+    spec:
+      securityContext:
+        fsGroup: 472
+
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.0.2
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 3000
+
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-user
+
+            - name: GF_SECURITY_ADMIN_PASSWORD
+
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
+
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+
+            - name: GF_SERVER_ENABLE_GZIP
+              value: "true"
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+              subPath: datasource.yml
+              readOnly: true
+
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboard-provider.yml
+              subPath: dashboard-provider.yml
+              readOnly: true
+
+            - name: dashboard
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+
+      volumes:
+        - name: data
+          emptyDir: {}
+
+        - name: provisioning
+          configMap:
+            name: grafana-provisioning
+
+        - name: dashboard
+          configMap:
+            name: grafana-dashboard
+
+---
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: grafana
+  namespace: observability
+
+spec:
+  selector:
+    app: grafana
+
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

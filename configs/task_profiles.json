@@ -1,0 +1,36 @@
+{
+  "profiles": [
+    {
+      "profile_id": "busybox-smoke",
+      "description": "受控的轻量计算测试任务",
+
+      "image": "busybox:1.36",
+
+      "allowed_source_access_nodes": [
+        "trx Lorient_KMA"
+      ],
+
+      "default_cpu_request_m": 500,
+      "max_cpu_request_m": 2000,
+
+      "default_memory_request_mib": 256,
+      "max_memory_request_mib": 2048,
+
+      "default_cpu_limit_m": 1000,
+      "max_cpu_limit_m": 4000,
+
+      "default_memory_limit_mib": 512,
+      "max_memory_limit_mib": 4096,
+
+      "max_gpu_request": 0,
+
+      "default_bandwidth_gbps": 100,
+      "max_bandwidth_gbps": 400,
+
+      "default_duration_seconds": 10,
+      "max_duration_seconds": 300,
+
+      "command_template": "set -eu\necho \"Managed task started\"\necho \"Task ID: ${TASK_ID}\"\necho \"Pod: ${POD_NAME}\"\necho \"Node: ${NODE_NAME}\"\necho \"Site: ${EXPECTED_SITE_ID}\"\nsleep __DURATION_SECONDS__\necho \"Managed task completed\""
+    }
+  ]
+}

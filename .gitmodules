@@ -1,0 +1,4 @@
+[submodule "third_party/oopt-gnpy"]
+	path = third_party/oopt-gnpy
+	url = https://github.com/Telecominfraproject/oopt-gnpy.git
+	ignore = untracked

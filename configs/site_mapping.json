@@ -1,0 +1,19 @@
+{
+  "sites": [
+    {
+      "site_id": "site-vannes",
+      "name": "Vannes Compute Site",
+      "network_access_node": "trx Vannes_KBE"
+    },
+    {
+      "site_id": "site-rennes",
+      "name": "Rennes Compute Site",
+      "network_access_node": "trx Rennes_STA"
+    },
+    {
+      "site_id": "site-brest",
+      "name": "Brest Compute Site",
+      "network_access_node": "trx Brest_KLA"
+    }
+  ]
+}

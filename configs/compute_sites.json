@@ -1,0 +1,37 @@
+{
+  "compute_sites": [
+    {
+      "site_id": "site-vannes",
+      "name": "Vannes Compute Site",
+      "network_access_node": "trx Vannes_KBE",
+      "cpu_total": 32,
+      "cpu_available": 24,
+      "memory_gb_total": 128,
+      "memory_gb_available": 96,
+      "gpu_total": 2,
+      "gpu_available": 1
+    },
+    {
+      "site_id": "site-rennes",
+      "name": "Rennes Compute Site",
+      "network_access_node": "trx Rennes_STA",
+      "cpu_total": 64,
+      "cpu_available": 40,
+      "memory_gb_total": 256,
+      "memory_gb_available": 160,
+      "gpu_total": 4,
+      "gpu_available": 2
+    },
+    {
+      "site_id": "site-brest",
+      "name": "Brest Compute Site",
+      "network_access_node": "trx Brest_KLA",
+      "cpu_total": 48,
+      "cpu_available": 12,
+      "memory_gb_total": 192,
+      "memory_gb_available": 48,
+      "gpu_total": 2,
+      "gpu_available": 0
+    }
+  ]
+}

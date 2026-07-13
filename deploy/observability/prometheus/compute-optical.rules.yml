@@ -1,0 +1,110 @@
+groups:
+  - name: compute-optical-runtime
+
+    rules:
+      - alert: ComputeOpticalScrapeTargetDown
+
+        expr: |
+          up{
+            job="compute-optical-orchestrator"
+          } == 0
+
+        for: 30s
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: Compute-optical metrics target is unavailable
+          description: >
+            Prometheus has been unable to scrape the
+            compute-optical orchestrator for at least 30 seconds.
+
+      - alert: ComputeOpticalMetricsCollectorDown
+
+        expr: |
+          compute_optical_metrics_collector_up == 0
+
+        for: 30s
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: Orchestrator metrics collector failed
+          description: >
+            The custom orchestrator collector could not build
+            a complete metrics snapshot.
+
+      - alert: ComputeOpticalControllerDown
+
+        expr: |
+          compute_optical_controller_enabled == 1
+          and
+          compute_optical_controller_up == 0
+
+        for: 30s
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: Reconciliation controller is not running
+          description: >
+            The API process reports that the background
+            reconciliation controller is not alive.
+
+      - alert: ComputeOpticalKubernetesDiscoveryDown
+
+        expr: |
+          compute_optical_kubernetes_resource_discovery_up == 0
+
+        for: 30s
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: Kubernetes resource discovery failed
+          description: >
+            The orchestrator cannot currently obtain
+            Kubernetes compute-site resource snapshots.
+
+      - alert: ComputeOpticalControllerTaskErrors
+
+        expr: |
+          compute_optical_controller_last_task_errors > 0
+
+        for: 30s
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: Controller reconciliation contains task errors
+          description: >
+            At least one task failed during the latest
+            reconciliation cycle.
+
+      - alert: ComputeOpticalSiteCPURequestsHigh
+
+        expr: |
+          (
+            compute_optical_site_cpu_requested_millicores
+            /
+            clamp_min(
+              compute_optical_site_cpu_allocatable_millicores,
+              1
+            )
+          ) > 0.85
+
+        for: 2m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: Compute-site CPU requests are high
+          description: >
+            Active Pod CPU requests exceed 85 percent of
+            allocatable CPU at site {{ $labels.site_id }}.

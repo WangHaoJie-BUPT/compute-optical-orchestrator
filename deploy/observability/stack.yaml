@@ -1,0 +1,261 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: prometheus-data
+  namespace: observability
+
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: prometheus
+  namespace: observability
+
+spec:
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: prometheus
+
+  template:
+    metadata:
+      labels:
+        app: prometheus
+
+    spec:
+      securityContext:
+        fsGroup: 65534
+
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.13.1
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=7d
+            - --web.enable-lifecycle
+
+          ports:
+            - name: http
+              containerPort: 9090
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+            limits:
+              cpu: 500m
+              memory: 1Gi
+
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+
+            - name: data
+              mountPath: /prometheus
+
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+
+---
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: prometheus
+  namespace: observability
+
+spec:
+  selector:
+    app: prometheus
+
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: grafana-data
+  namespace: observability
+
+spec:
+  accessModes:
+    - ReadWriteOnce
+
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: grafana
+  namespace: observability
+
+spec:
+  replicas: 1
+
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: grafana
+
+  template:
+    metadata:
+      labels:
+        app: grafana
+
+    spec:
+      securityContext:
+        fsGroup: 472
+
+      containers:
+        - name: grafana
+          image: grafana/grafana:13.1.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 3000
+
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-user
+
+            - name: GF_SECURITY_ADMIN_PASSWORD
+
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
+
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+
+            limits:
+              cpu: 500m
+              memory: 1Gi
+
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+              subPath: datasource.yml
+              readOnly: true
+
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/dashboard-provider.yml
+              subPath: dashboard-provider.yml
+              readOnly: true
+
+            - name: dashboard
+              mountPath: /etc/grafana/dashboards
+              readOnly: true
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+
+        - name: provisioning
+          configMap:
+            name: grafana-provisioning
+
+        - name: dashboard
+          configMap:
+            name: grafana-dashboard
+
+---
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: grafana
+  namespace: observability
+
+spec:
+  selector:
+    app: grafana
+
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
