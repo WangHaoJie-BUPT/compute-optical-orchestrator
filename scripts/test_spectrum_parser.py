@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -16,32 +15,36 @@ from orchestrator.adapters.gnpy_spectrum_parser import (  # noqa: E402
 from orchestrator.models.spectrum import SpectrumSlot  # noqa: E402
 
 
-RESULT_FILE = (
-    PROJECT_ROOT
-    / "experiments"
-    / "results"
-    / "gnpy_custom"
-    / "explicit-slot-result.json"
-)
+RESPONSE = {
+    "path-properties": {
+        "path-route-objects": [
+            {
+                "path-route-object": {
+                    "label-hop": [
+                        {
+                            "N": -276,
+                            "M": 4,
+                        }
+                    ]
+                }
+            },
+            {
+                "path-route-object": {
+                    "label-hop": [
+                        {
+                            "N": -276,
+                            "M": 4,
+                        }
+                    ]
+                }
+            },
+        ]
+    }
+}
 
 
 def main() -> None:
-    if not RESULT_FILE.is_file():
-        raise FileNotFoundError(
-            f"GNPy result does not exist: {RESULT_FILE}"
-        )
-
-    with RESULT_FILE.open("r", encoding="utf-8") as file:
-        document = json.load(file)
-
-    responses = document.get("response")
-
-    if not isinstance(responses, list) or not responses:
-        raise ValueError(
-            "GNPy result does not contain a valid response."
-        )
-
-    slots = extract_spectrum_slots(responses[0])
+    slots = extract_spectrum_slots(RESPONSE)
 
     print(f"Unique spectrum slots: {len(slots)}")
     print("-" * 70)
