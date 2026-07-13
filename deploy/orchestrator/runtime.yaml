@@ -20,7 +20,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: orchestrator
-        image: compute-optical-orchestrator:dev-incluster-v5
+        image: compute-optical-orchestrator:dev-incluster-v6
         imagePullPolicy: Never
         command:
         - /app/scripts/container_entrypoint.sh
