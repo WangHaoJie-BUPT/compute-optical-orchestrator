@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      IMAGE: compute-optical-orchestrator:ci
+      KIND_VERSION: v0.32.0
+      KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build runtime image
+        run: docker build --progress=plain -t "$IMAGE" .
+
+      - name: Validate Kustomize rendering
+        run: docker run --rm "$IMAGE" kubectl kustomize /app >/dev/null
+
+      - name: Install kind
+        run: |
+          curl -fsSLo kind \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          echo "${KIND_SHA256}  kind" | sha256sum --check
+          sudo install -o root -g root -m 0755 kind /usr/local/bin/kind
+
+      - name: Create three-site kind cluster
+        run: |
+          kind create cluster \
+            --name compute-optical \
+            --config deploy/kind/cluster.yaml \
+            --wait 180s
+
+      - name: Load workload image
+        run: |
+          docker pull busybox:1.36
+          kind load docker-image \
+            busybox:1.36 \
+            --name compute-optical
+
+      - name: Label compute sites
+        run: |
+          docker run --rm --network host \
+            -v "$HOME/.kube:/root/.kube:ro" \
+            "$IMAGE" \
+            kubectl --context kind-compute-optical label node \
+            compute-optical-worker \
+            compute-site=site-vannes \
+            --overwrite
+
+          docker run --rm --network host \
+            -v "$HOME/.kube:/root/.kube:ro" \
+            "$IMAGE" \
+            kubectl --context kind-compute-optical label node \
+            compute-optical-worker2 \
+            compute-site=site-rennes \
+            --overwrite
+
+          docker run --rm --network host \
+            -v "$HOME/.kube:/root/.kube:ro" \
+            "$IMAGE" \
+            kubectl --context kind-compute-optical label node \
+            compute-optical-worker3 \
+            compute-site=site-brest \
+            --overwrite
+
+      - name: Run local and Kubernetes tests
+        run: |
+          docker run --rm --network host \
+            -v "$HOME/.kube:/root/.kube:ro" \
+            "$IMAGE" \
+            sh -c '
+              set -eu
+
+              python -m pip install \
+                --disable-pip-version-check \
+                -r requirements-test.txt
+
+              python scripts/test_spectrum_parser.py
+              python scripts/test_optical_resource_manager.py
+              python scripts/test_transactional_allocation.py
+              python scripts/test_joint_scheduler.py
+              python scripts/test_sequential_scheduler.py
+              python scripts/test_gnpy_adapter.py
+              python scripts/test_kubernetes_joint_planner_logging.py
+              python scripts/test_blocked_candidate_audit.py
+
+              python scripts/test_kubernetes_adapter.py
+              python scripts/test_dynamic_kubernetes_joint_planner.py
+              python scripts/test_task_audit_events.py
+              python scripts/test_secure_runtime_api.py
+            '
