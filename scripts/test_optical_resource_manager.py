@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -21,30 +20,43 @@ from orchestrator.state.optical_resource_manager import (  # noqa: E402
 )
 
 
-RESULT_FILE = (
-    PROJECT_ROOT
-    / "experiments"
-    / "results"
-    / "joint_scheduler"
-    / "task-001-site-rennes.json"
-)
-
-
-def load_response() -> dict:
-    if not RESULT_FILE.is_file():
-        raise FileNotFoundError(
-            f"GNPy result does not exist: {RESULT_FILE}"
-        )
-
-    with RESULT_FILE.open("r", encoding="utf-8") as file:
-        document = json.load(file)
-
-    responses = document.get("response")
-
-    if not isinstance(responses, list) or not responses:
-        raise ValueError("GNPy output has no valid response.")
-
-    return responses[0]
+RESPONSE = {
+    "path-properties": {
+        "path-route-objects": [
+            {
+                "path-route-object": {
+                    "num-unnum-hop": {
+                        "node-id": "fiber Lorient-to-Vannes"
+                    }
+                }
+            },
+            {
+                "path-route-object": {
+                    "label-hop": [
+                        {
+                            "N": -284,
+                            "M": 4,
+                        }
+                    ]
+                }
+            },
+            {
+                "path-route-object": {
+                    "num-unnum-hop": {
+                        "node-id": "fiber Vannes-to-Ploermel"
+                    }
+                }
+            },
+            {
+                "path-route-object": {
+                    "num-unnum-hop": {
+                        "node-id": "fiber Ploermel-to-Rennes"
+                    }
+                }
+            },
+        ]
+    }
+}
 
 
 def print_allocations(
@@ -78,7 +90,7 @@ def print_allocations(
 
 
 def main() -> None:
-    response = load_response()
+    response = RESPONSE
 
     links = extract_fiber_links(response)
     slots = extract_spectrum_slots(response)
