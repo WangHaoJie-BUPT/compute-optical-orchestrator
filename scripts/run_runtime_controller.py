@@ -31,6 +31,9 @@ from orchestrator.repositories.controller_lease_repository import (  # noqa: E40
 from orchestrator.repositories.runtime_task_repository import (  # noqa: E402
     RuntimeTaskRepository,
 )
+from orchestrator.repositories.task_event_repository import (  # noqa: E402
+    TaskEventRepository,
+)
 from orchestrator.services.kubernetes_joint_planner import (  # noqa: E402
     KubernetesJointPlanner,
 )
@@ -74,6 +77,9 @@ def main() -> None:
 
     repository = RuntimeTaskRepository(database)
     repository.initialize()
+
+    event_repository = TaskEventRepository(database)
+    event_repository.initialize()
 
     lease_repository = ControllerLeaseRepository(
         database
@@ -119,6 +125,7 @@ def main() -> None:
     runtime_service = (
         PersistentKubernetesRuntimeService(
             repository=repository,
+            event_repository=event_repository,
             planner=planner,
             kubernetes_adapter=adapter,
         )

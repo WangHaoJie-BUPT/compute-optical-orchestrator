@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from orchestrator.adapters.kubernetes_adapter import (
@@ -21,6 +22,9 @@ from orchestrator.repositories.runtime_task_repository import (
     RuntimeTaskRepository,
     RuntimeTaskRepositoryError,
 )
+from orchestrator.repositories.task_event_repository import (
+    TaskEventRepository,
+)
 from orchestrator.services.kubernetes_joint_planner import (
     KubernetesJointPlanner,
     KubernetesJointPlannerError,
@@ -28,6 +32,9 @@ from orchestrator.services.kubernetes_joint_planner import (
 from orchestrator.state.optical_resource_manager import (
     OpticalResourceManagerError,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class PersistentKubernetesRuntimeServiceError(RuntimeError):
@@ -65,10 +72,12 @@ class PersistentKubernetesRuntimeService:
     def __init__(
         self,
         repository: RuntimeTaskRepository,
+        event_repository: TaskEventRepository,
         planner: KubernetesJointPlanner,
         kubernetes_adapter: KubernetesAdapter,
     ) -> None:
         self.repository = repository
+        self.event_repository = event_repository
         self.planner = planner
         self.kubernetes_adapter = kubernetes_adapter
 
@@ -119,6 +128,34 @@ class PersistentKubernetesRuntimeService:
                 state=TaskState.BLOCKED,
                 failure_reason=str(exc),
             )
+
+            try:
+                self.event_repository.append(
+                    task_id=task.task_id,
+                    event_type="JOINT_PLANNING_BLOCKED",
+                    source=(
+                        "persistent-kubernetes-runtime-service"
+                    ),
+                    message=(
+                        "Joint planning produced no selectable "
+                        "candidate."
+                    ),
+                    details={
+                        "failure_reason": str(exc),
+                        "candidate_plans": [
+                            asdict(candidate)
+                            for candidate in exc.candidate_plans
+                        ],
+                    },
+                    previous_state=TaskState.PLANNING,
+                    new_state=blocked.state,
+                )
+            except Exception:
+                logger.exception(
+                    "failed to persist blocked planning audit "
+                    "task_id=%s",
+                    task.task_id,
+                )
 
             raise PersistentKubernetesRuntimeServiceError(
                 f"Task {task.task_id} was blocked: {exc}"

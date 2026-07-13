@@ -27,6 +27,9 @@ from orchestrator.models.task_state import TaskState  # noqa: E402
 from orchestrator.repositories.runtime_task_repository import (  # noqa: E402
     RuntimeTaskRepository,
 )
+from orchestrator.repositories.task_event_repository import (  # noqa: E402
+    TaskEventRepository,
+)
 from orchestrator.services.kubernetes_joint_planner import (  # noqa: E402
     KubernetesJointPlanner,
 )
@@ -127,8 +130,12 @@ def build_service(
         optical_manager=optical_manager,
     )
 
+    event_repository = TaskEventRepository(database)
+    event_repository.initialize()
+
     service = PersistentKubernetesRuntimeService(
         repository=repository,
+        event_repository=event_repository,
         planner=planner,
         kubernetes_adapter=kubernetes_adapter,
     )

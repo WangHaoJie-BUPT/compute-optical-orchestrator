@@ -226,6 +226,7 @@ def build_runtime_context(
     runtime_service = (
         PersistentKubernetesRuntimeService(
             repository=repository,
+            event_repository=event_repository,
             planner=planner,
             kubernetes_adapter=kubernetes_adapter,
         )
