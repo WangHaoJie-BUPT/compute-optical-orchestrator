@@ -88,10 +88,44 @@ spec:
         volumeMounts:
         - name: runtime-data
           mountPath: /data
+        - name: runtime-config
+          mountPath: /app/configs/site_mapping.json
+          subPath: site_mapping.json
+          readOnly: true
+        - name: runtime-config
+          mountPath: /app/configs/task_profiles.json
+          subPath: task_profiles.json
+          readOnly: true
+        - name: runtime-config
+          mountPath: /app/topologies/gnpy_demo/meshTopologyExampleV2.xls
+          subPath: meshTopologyExampleV2.xls
+          readOnly: true
+        - name: runtime-config
+          mountPath: /app/topologies/gnpy_demo/eqpt_config.json
+          subPath: eqpt_config.json
+          readOnly: true
+        - name: runtime-config
+          mountPath: /app/requests/gnpy_demo/services-single.json
+          subPath: services-single.json
+          readOnly: true
       volumes:
       - name: runtime-data
         persistentVolumeClaim:
           claimName: compute-optical-orchestrator-data
+      - name: runtime-config
+        configMap:
+          name: compute-optical-runtime-config
+          items:
+          - key: site_mapping.json
+            path: site_mapping.json
+          - key: task_profiles.json
+            path: task_profiles.json
+          - key: meshTopologyExampleV2.xls
+            path: meshTopologyExampleV2.xls
+          - key: eqpt_config.json
+            path: eqpt_config.json
+          - key: services-single.json
+            path: services-single.json
 ---
 apiVersion: v1
 kind: Service

@@ -69,7 +69,7 @@ kubectl delete pod "$SEED_POD" \
   --wait=true
 
 echo "Switching the Deployment to the PVC"
-kubectl apply -f "$PROJECT_ROOT/deploy/orchestrator/runtime.yaml"
+kubectl apply -k "$PROJECT_ROOT"
 kubectl rollout status \
   "deployment/$DEPLOYMENT" \
   -n "$NAMESPACE" \

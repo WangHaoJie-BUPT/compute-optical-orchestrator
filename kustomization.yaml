@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deploy/orchestrator/namespaces.yaml
+  - deploy/orchestrator/rbac.yaml
+  - deploy/orchestrator/cluster-pod-reader-rbac.yaml
+  - deploy/orchestrator/namespace-reader-rbac.yaml
+  - deploy/orchestrator/runtime-pvc.yaml
+  - deploy/orchestrator/runtime.yaml
+
+configMapGenerator:
+  - name: compute-optical-runtime-config
+    namespace: orchestrator-system
+    files:
+      - site_mapping.json=configs/site_mapping.json
+      - task_profiles.json=configs/task_profiles.json
+      - meshTopologyExampleV2.xls=topologies/gnpy_demo/meshTopologyExampleV2.xls
+      - eqpt_config.json=topologies/gnpy_demo/eqpt_config.json
+      - services-single.json=requests/gnpy_demo/services-single.json
+
+generatorOptions:
+  labels:
+    app.kubernetes.io/name: compute-optical-orchestrator
+    app.kubernetes.io/component: runtime-config
+  disableNameSuffixHash: false
