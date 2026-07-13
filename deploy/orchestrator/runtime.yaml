@@ -90,7 +90,8 @@ spec:
           mountPath: /data
       volumes:
       - name: runtime-data
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: compute-optical-orchestrator-data
 ---
 apiVersion: v1
 kind: Service
