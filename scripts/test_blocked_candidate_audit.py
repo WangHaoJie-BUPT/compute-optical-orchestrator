@@ -55,6 +55,7 @@ CANDIDATE = KubernetesCandidatePlan(
     available_cpu_m=250,
     available_memory_mib=128.0,
     available_gpu=0,
+    accelerators=(),
     spectrum_slot=None,
     fiber_links=(),
     route=(),

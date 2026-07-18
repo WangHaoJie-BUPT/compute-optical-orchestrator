@@ -44,6 +44,13 @@ class TaskProfile:
 
     command_template: str
 
+    allowed_accelerator_resource_names: tuple[str, ...] = (
+        "nvidia.com/gpu",
+    )
+    allowed_accelerator_products: tuple[str, ...] = ()
+    allowed_accelerator_interconnects: tuple[str, ...] = ()
+    allowed_accelerator_partition_modes: tuple[str, ...] = ()
+
     def __post_init__(self) -> None:
         if not self.profile_id:
             raise TaskProfileError(
@@ -120,6 +127,11 @@ class TaskProfile:
         memory_limit_mib: int | None = None,
         bandwidth_gbps: float | None = None,
         duration_seconds: int | None = None,
+        accelerator_resource_name: str = "nvidia.com/gpu",
+        accelerator_product: str | None = None,
+        accelerator_memory_mib: int | None = None,
+        accelerator_interconnect: str | None = None,
+        accelerator_partition_mode: str | None = None,
     ) -> RuntimeTaskRequest:
         """Build a validated domain task from safe profile parameters."""
 
@@ -210,6 +222,53 @@ class TaskProfile:
                 f"{self.max_gpu_request}."
             )
 
+        accelerator_constraints = (
+            accelerator_product,
+            accelerator_memory_mib,
+            accelerator_interconnect,
+            accelerator_partition_mode,
+        )
+        if gpu_request == 0 and any(
+            value is not None
+            for value in accelerator_constraints
+        ):
+            raise TaskProfileError(
+                "Accelerator constraints require gpu_request > 0."
+            )
+
+        if (
+            gpu_request > 0
+            and accelerator_resource_name
+            not in self.allowed_accelerator_resource_names
+        ):
+            raise TaskProfileError(
+                f"Accelerator resource {accelerator_resource_name!r} "
+                f"is not allowed by profile {self.profile_id!r}."
+            )
+
+        for value, allowed, field_name in (
+            (
+                accelerator_product,
+                self.allowed_accelerator_products,
+                "product",
+            ),
+            (
+                accelerator_interconnect,
+                self.allowed_accelerator_interconnects,
+                "interconnect",
+            ),
+            (
+                accelerator_partition_mode,
+                self.allowed_accelerator_partition_modes,
+                "partition mode",
+            ),
+        ):
+            if value is not None and allowed and value not in allowed:
+                raise TaskProfileError(
+                    f"Accelerator {field_name} {value!r} is not "
+                    f"allowed by profile {self.profile_id!r}."
+                )
+
         if not (
             0
             < resolved_bandwidth
@@ -246,6 +305,13 @@ class TaskProfile:
             shell_command=command,
             cpu_limit_m=resolved_cpu_limit,
             memory_limit_mib=resolved_memory_limit,
+            accelerator_resource_name=accelerator_resource_name,
+            accelerator_product=accelerator_product,
+            accelerator_memory_mib=accelerator_memory_mib,
+            accelerator_interconnect=accelerator_interconnect,
+            accelerator_partition_mode=(
+                accelerator_partition_mode
+            ),
         )
 
     @classmethod
@@ -306,5 +372,33 @@ class TaskProfile:
             ),
             command_template=str(
                 data["command_template"]
+            ),
+            allowed_accelerator_resource_names=tuple(
+                str(item)
+                for item in data.get(
+                    "allowed_accelerator_resource_names",
+                    ["nvidia.com/gpu"],
+                )
+            ),
+            allowed_accelerator_products=tuple(
+                str(item)
+                for item in data.get(
+                    "allowed_accelerator_products",
+                    [],
+                )
+            ),
+            allowed_accelerator_interconnects=tuple(
+                str(item)
+                for item in data.get(
+                    "allowed_accelerator_interconnects",
+                    [],
+                )
+            ),
+            allowed_accelerator_partition_modes=tuple(
+                str(item)
+                for item in data.get(
+                    "allowed_accelerator_partition_modes",
+                    [],
+                )
             ),
         )

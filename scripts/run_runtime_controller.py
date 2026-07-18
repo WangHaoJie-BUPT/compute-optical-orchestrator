@@ -16,8 +16,8 @@ from orchestrator.adapters.gnpy_adapter import GNPyAdapter  # noqa: E402
 from orchestrator.adapters.gnpy_request_builder import (  # noqa: E402
     GNPyRequestBuilder,
 )
-from orchestrator.adapters.kubernetes_adapter import (  # noqa: E402
-    KubernetesAdapter,
+from orchestrator.adapters.kubernetes_api_adapter import (  # noqa: E402
+    KubernetesApiAdapter,
 )
 from orchestrator.adapters.kubernetes_resource_discovery import (  # noqa: E402
     KubernetesResourceDiscovery,
@@ -86,7 +86,7 @@ def main() -> None:
     )
     lease_repository.initialize()
 
-    adapter = KubernetesAdapter(
+    adapter = KubernetesApiAdapter(
         namespace="compute-optical",
         context="kind-compute-optical",
     )

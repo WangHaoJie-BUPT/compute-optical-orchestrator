@@ -108,3 +108,38 @@ groups:
           description: >
             Active Pod CPU requests exceed 85 percent of
             allocatable CPU at site {{ $labels.site_id }}.
+
+      - alert: ComputeOpticalAdmissionQueueNearCapacity
+
+        expr: |
+          sum(
+            compute_optical_admission_tasks{
+              state=~"QUEUED|DISPATCHING"
+            }
+          ) > 900
+
+        for: 5m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: Admission queue is near its configured capacity
+          description: >
+            More than 900 tasks have remained queued or dispatching
+            for at least five minutes.
+
+      - alert: ComputeOpticalAdmissionWaitHigh
+
+        expr: |
+          compute_optical_admission_oldest_wait_seconds > 300
+
+        for: 5m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: Admission queue wait time is high
+          description: >
+            The oldest active task has waited more than five minutes.

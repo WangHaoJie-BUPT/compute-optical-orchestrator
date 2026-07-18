@@ -76,7 +76,7 @@ jobs:
             compute-site=site-brest \
             --overwrite
 
-      - name: Run local and Kubernetes tests
+      - name: Run complete local and Kubernetes test suite
         run: |
           docker run --rm --network host \
             -v "$HOME/.kube:/root/.kube:ro" \
@@ -88,17 +88,5 @@ jobs:
                 --disable-pip-version-check \
                 -r requirements-test.txt
 
-              python scripts/test_spectrum_parser.py
-              python scripts/test_optical_resource_manager.py
-              python scripts/test_transactional_allocation.py
-              python scripts/test_joint_scheduler.py
-              python scripts/test_sequential_scheduler.py
-              python scripts/test_gnpy_adapter.py
-              python scripts/test_kubernetes_joint_planner_logging.py
-              python scripts/test_blocked_candidate_audit.py
-
-              python scripts/test_kubernetes_adapter.py
-              python scripts/test_dynamic_kubernetes_joint_planner.py
-              python scripts/test_task_audit_events.py
-              python scripts/test_secure_runtime_api.py
+              python scripts/run_test_suite.py
             '

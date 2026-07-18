@@ -20,7 +20,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
       - name: orchestrator
-        image: compute-optical-orchestrator:dev-incluster-v7
+        image: compute-optical-orchestrator:dev-incluster-v13
         imagePullPolicy: Never
         command:
         - /app/scripts/container_entrypoint.sh
@@ -39,6 +39,18 @@ spec:
         - '9100'
         - --controller-interval
         - '2'
+        - --admission-aging-seconds
+        - '60'
+        - --admission-max-active-total
+        - '1000'
+        - --admission-dispatch-timeout-seconds
+        - '300'
+        - --admission-lease-seconds
+        - '300'
+        - --admission-max-active-per-tenant
+        - '100'
+        - --admission-max-dispatch-per-cycle
+        - '1'
         env:
         - name: COMPUTE_OPTICAL_API_KEY
           valueFrom:

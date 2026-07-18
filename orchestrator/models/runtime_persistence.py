@@ -20,6 +20,8 @@ class RuntimeTaskRecord:
     selected_node_name: str | None
     failure_reason: str | None
 
+    version: int
+
     created_at: str
     updated_at: str
 

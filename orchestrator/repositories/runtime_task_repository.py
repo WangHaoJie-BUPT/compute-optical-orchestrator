@@ -14,7 +14,10 @@ from orchestrator.models.runtime_persistence import (
 )
 from orchestrator.models.runtime_task import RuntimeTaskRequest
 from orchestrator.models.spectrum import SpectrumSlot
-from orchestrator.models.task_state import TaskState
+from orchestrator.models.task_state import (
+    TaskState,
+    can_transition_runtime_state,
+)
 from orchestrator.services.kubernetes_joint_planner import (
     KubernetesJointPlan,
 )
@@ -58,6 +61,13 @@ class RuntimeTaskRepository:
             memory_request_mib INTEGER NOT NULL,
             gpu_request INTEGER NOT NULL,
 
+            accelerator_resource_name TEXT NOT NULL
+                DEFAULT 'nvidia.com/gpu',
+            accelerator_product TEXT,
+            accelerator_memory_mib INTEGER,
+            accelerator_interconnect TEXT,
+            accelerator_partition_mode TEXT,
+
             cpu_limit_m INTEGER,
             memory_limit_mib INTEGER,
 
@@ -66,6 +76,7 @@ class RuntimeTaskRepository:
             shell_command TEXT NOT NULL,
 
             state TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 0,
             selected_site_id TEXT,
             selected_node_name TEXT,
             failure_reason TEXT,
@@ -117,16 +128,65 @@ class RuntimeTaskRepository:
                 ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS runtime_spectrum_claims (
+            task_id TEXT NOT NULL,
+            link_id TEXT NOT NULL,
+            slot_index INTEGER NOT NULL,
+
+            PRIMARY KEY (link_id, slot_index),
+
+            FOREIGN KEY (task_id)
+                REFERENCES runtime_optical_allocations(task_id)
+                ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_runtime_tasks_state
             ON runtime_tasks(state);
 
         CREATE INDEX IF NOT EXISTS idx_runtime_execution_phase
             ON runtime_kubernetes_executions(phase);
+
+        CREATE INDEX IF NOT EXISTS idx_runtime_spectrum_task
+            ON runtime_spectrum_claims(task_id);
         """
 
         try:
             with self.database.connection() as connection:
                 connection.executescript(schema)
+
+                columns = {
+                    str(row["name"])
+                    for row in connection.execute(
+                        "PRAGMA table_info(runtime_tasks)"
+                    ).fetchall()
+                }
+
+                if "version" not in columns:
+                    connection.execute(
+                        "ALTER TABLE runtime_tasks "
+                        "ADD COLUMN version INTEGER NOT NULL DEFAULT 0"
+                    )
+
+                accelerator_columns = {
+                    "accelerator_resource_name": (
+                        "TEXT NOT NULL DEFAULT 'nvidia.com/gpu'"
+                    ),
+                    "accelerator_product": "TEXT",
+                    "accelerator_memory_mib": "INTEGER",
+                    "accelerator_interconnect": "TEXT",
+                    "accelerator_partition_mode": "TEXT",
+                }
+                for column_name, column_type in (
+                    accelerator_columns.items()
+                ):
+                    if column_name not in columns:
+                        connection.execute(
+                            "ALTER TABLE runtime_tasks ADD COLUMN "
+                            f"{column_name} {column_type}"
+                        )
+
+                self._migrate_spectrum_claims(connection)
+
                 connection.commit()
         except sqlite3.Error as exc:
             raise RuntimeTaskRepositoryError(
@@ -151,12 +211,18 @@ class RuntimeTaskRepository:
                         cpu_request_m,
                         memory_request_mib,
                         gpu_request,
+                        accelerator_resource_name,
+                        accelerator_product,
+                        accelerator_memory_mib,
+                        accelerator_interconnect,
+                        accelerator_partition_mode,
                         cpu_limit_m,
                         memory_limit_mib,
                         bandwidth_gbps,
                         image,
                         shell_command,
                         state,
+                        version,
                         selected_site_id,
                         selected_node_name,
                         failure_reason,
@@ -165,7 +231,8 @@ class RuntimeTaskRepository:
                     )
                     VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, NULL, NULL, NULL, ?, ?
+                        ?, ?, ?, ?, ?,
+                        ?, 0, NULL, NULL, NULL, ?, ?
                     )
                     """,
                     (
@@ -174,6 +241,11 @@ class RuntimeTaskRepository:
                         task.cpu_request_m,
                         task.memory_request_mib,
                         task.gpu_request,
+                        task.accelerator_resource_name,
+                        task.accelerator_product,
+                        task.accelerator_memory_mib,
+                        task.accelerator_interconnect,
+                        task.accelerator_partition_mode,
                         task.cpu_limit_m,
                         task.memory_limit_mib,
                         task.bandwidth_gbps,
@@ -338,11 +410,35 @@ class RuntimeTaskRepository:
         selected_site_id: str | None = None,
         selected_node_name: str | None = None,
         failure_reason: str | None = None,
+        expected_version: int | None = None,
     ) -> RuntimeTaskRecord:
-        """Update task state and optional scheduling metadata."""
+        """Validate and compare-update task state and metadata."""
 
         try:
             with self.database.transaction() as connection:
+                current_state, current_version = (
+                    self._get_state_version(
+                        connection,
+                        task_id,
+                    )
+                )
+
+                self._validate_transition(
+                    task_id,
+                    current_state,
+                    state,
+                )
+
+                if (
+                    expected_version is not None
+                    and current_version != expected_version
+                ):
+                    raise RuntimeTaskRepositoryError(
+                        f"Stale runtime task version for {task_id}: "
+                        f"expected {expected_version}, "
+                        f"current {current_version}."
+                    )
+
                 cursor = connection.execute(
                     """
                     UPDATE runtime_tasks
@@ -352,8 +448,11 @@ class RuntimeTaskRepository:
                         selected_node_name =
                             COALESCE(?, selected_node_name),
                         failure_reason = ?,
-                        updated_at = ?
+                        updated_at = ?,
+                        version = version + 1
                     WHERE task_id = ?
+                      AND state = ?
+                      AND version = ?
                     """,
                     (
                         state.value,
@@ -362,12 +461,14 @@ class RuntimeTaskRepository:
                         failure_reason,
                         utc_now(),
                         task_id,
+                        current_state.value,
+                        current_version,
                     ),
                 )
 
                 if cursor.rowcount != 1:
                     raise RuntimeTaskRepositoryError(
-                        f"Runtime task does not exist: {task_id}"
+                        f"Concurrent state update detected: {task_id}"
                     )
         except sqlite3.Error as exc:
             raise RuntimeTaskRepositoryError(
@@ -393,6 +494,18 @@ class RuntimeTaskRepository:
 
         try:
             with self.database.transaction() as connection:
+                current_state, current_version = (
+                    self._get_state_version(
+                        connection,
+                        plan.task_id,
+                    )
+                )
+                self._validate_transition(
+                    plan.task_id,
+                    current_state,
+                    TaskState.RESERVED,
+                )
+
                 connection.execute(
                     """
                     INSERT INTO runtime_optical_allocations (
@@ -437,6 +550,37 @@ class RuntimeTaskRepository:
                     ),
                 )
 
+                connection.execute(
+                    """
+                    DELETE FROM runtime_spectrum_claims
+                    WHERE task_id = ?
+                    """,
+                    (plan.task_id,),
+                )
+
+                try:
+                    connection.executemany(
+                        """
+                        INSERT INTO runtime_spectrum_claims (
+                            task_id,
+                            link_id,
+                            slot_index
+                        )
+                        VALUES (?, ?, ?)
+                        """,
+                        self._spectrum_claim_rows(
+                            task_id=plan.task_id,
+                            links=plan.fiber_links,
+                            slot=plan.spectrum_slot,
+                        ),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise RuntimeTaskRepositoryError(
+                        "Persistent spectrum conflict for task "
+                        f"{plan.task_id}: another allocation owns "
+                        "at least one link/slot index."
+                    ) from exc
+
                 cursor = connection.execute(
                     """
                     UPDATE runtime_tasks
@@ -444,8 +588,11 @@ class RuntimeTaskRepository:
                         selected_site_id = ?,
                         selected_node_name = ?,
                         failure_reason = NULL,
-                        updated_at = ?
+                        updated_at = ?,
+                        version = version + 1
                     WHERE task_id = ?
+                      AND state = ?
+                      AND version = ?
                     """,
                     (
                         TaskState.RESERVED.value,
@@ -453,12 +600,15 @@ class RuntimeTaskRepository:
                         plan.selected_node_name,
                         timestamp,
                         plan.task_id,
+                        current_state.value,
+                        current_version,
                     ),
                 )
 
                 if cursor.rowcount != 1:
                     raise RuntimeTaskRepositoryError(
-                        f"Runtime task does not exist: {plan.task_id}"
+                        "Concurrent plan persistence detected: "
+                        f"{plan.task_id}"
                     )
         except sqlite3.Error as exc:
             raise RuntimeTaskRepositoryError(
@@ -539,6 +689,18 @@ class RuntimeTaskRepository:
 
         try:
             with self.database.transaction() as connection:
+                current_state, current_version = (
+                    self._get_state_version(
+                        connection,
+                        task_id,
+                    )
+                )
+                self._validate_transition(
+                    task_id,
+                    current_state,
+                    TaskState.RUNNING,
+                )
+
                 connection.execute(
                     """
                     INSERT INTO runtime_kubernetes_executions (
@@ -585,19 +747,25 @@ class RuntimeTaskRepository:
                     UPDATE runtime_tasks
                     SET state = ?,
                         failure_reason = NULL,
-                        updated_at = ?
+                        updated_at = ?,
+                        version = version + 1
                     WHERE task_id = ?
+                      AND state = ?
+                      AND version = ?
                     """,
                     (
                         TaskState.RUNNING.value,
                         timestamp,
                         task_id,
+                        current_state.value,
+                        current_version,
                     ),
                 )
 
                 if cursor.rowcount != 1:
                     raise RuntimeTaskRepositoryError(
-                        f"Runtime task does not exist: {task_id}"
+                        "Concurrent Job persistence detected: "
+                        f"{task_id}"
                     )
         except sqlite3.Error as exc:
             raise RuntimeTaskRepositoryError(
@@ -796,6 +964,18 @@ class RuntimeTaskRepository:
 
         try:
             with self.database.transaction() as connection:
+                current_state, current_version = (
+                    self._get_state_version(
+                        connection,
+                        task_id,
+                    )
+                )
+                self._validate_transition(
+                    task_id,
+                    current_state,
+                    final_state,
+                )
+
                 connection.execute(
                     """
                     DELETE FROM runtime_optical_allocations
@@ -809,20 +989,26 @@ class RuntimeTaskRepository:
                     UPDATE runtime_tasks
                     SET state = ?,
                         failure_reason = ?,
-                        updated_at = ?
+                        updated_at = ?,
+                        version = version + 1
                     WHERE task_id = ?
+                      AND state = ?
+                      AND version = ?
                     """,
                     (
                         final_state.value,
                         failure_reason,
                         utc_now(),
                         task_id,
+                        current_state.value,
+                        current_version,
                     ),
                 )
 
                 if cursor.rowcount != 1:
                     raise RuntimeTaskRepositoryError(
-                        f"Runtime task does not exist: {task_id}"
+                        "Concurrent release completion detected: "
+                        f"{task_id}"
                     )
         except sqlite3.Error as exc:
             raise RuntimeTaskRepositoryError(
@@ -839,6 +1025,137 @@ class RuntimeTaskRepository:
         return record
 
     @staticmethod
+    def _get_state_version(
+        connection: sqlite3.Connection,
+        task_id: str,
+    ) -> tuple[TaskState, int]:
+        row = connection.execute(
+            """
+            SELECT state, version
+            FROM runtime_tasks
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+
+        if row is None:
+            raise RuntimeTaskRepositoryError(
+                f"Runtime task does not exist: {task_id}"
+            )
+
+        return TaskState(str(row["state"])), int(row["version"])
+
+    @staticmethod
+    def _spectrum_claim_rows(
+        task_id: str,
+        links: tuple[str, ...] | list[str],
+        slot: SpectrumSlot,
+    ) -> list[tuple[str, str, int]]:
+        unique_links = tuple(dict.fromkeys(links))
+
+        if not unique_links:
+            raise RuntimeTaskRepositoryError(
+                f"Cannot persist spectrum without links: {task_id}"
+            )
+
+        return [
+            (task_id, link_id, slot_index)
+            for link_id in unique_links
+            for slot_index in range(
+                slot.lower_index,
+                slot.upper_index,
+            )
+        ]
+
+    @classmethod
+    def _migrate_spectrum_claims(
+        cls,
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Backfill and validate claims for persisted optical plans."""
+
+        allocations = connection.execute(
+            """
+            SELECT task_id, n, m, fiber_links_json
+            FROM runtime_optical_allocations
+            ORDER BY task_id
+            """
+        ).fetchall()
+
+        for allocation in allocations:
+            task_id = str(allocation["task_id"])
+
+            try:
+                links = tuple(
+                    str(link)
+                    for link in json.loads(
+                        str(allocation["fiber_links_json"])
+                    )
+                )
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeTaskRepositoryError(
+                    "Cannot migrate spectrum claims for task "
+                    f"{task_id}: invalid fiber_links_json."
+                ) from exc
+
+            expected = set(
+                cls._spectrum_claim_rows(
+                    task_id=task_id,
+                    links=links,
+                    slot=SpectrumSlot(
+                        n=int(allocation["n"]),
+                        m=int(allocation["m"]),
+                    ),
+                )
+            )
+
+            connection.executemany(
+                """
+                INSERT OR IGNORE INTO runtime_spectrum_claims (
+                    task_id,
+                    link_id,
+                    slot_index
+                )
+                VALUES (?, ?, ?)
+                """,
+                sorted(expected),
+            )
+
+            actual = {
+                (
+                    str(row["task_id"]),
+                    str(row["link_id"]),
+                    int(row["slot_index"]),
+                )
+                for row in connection.execute(
+                    """
+                    SELECT task_id, link_id, slot_index
+                    FROM runtime_spectrum_claims
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchall()
+            }
+
+            if actual != expected:
+                raise RuntimeTaskRepositoryError(
+                    "Persisted spectrum allocations overlap while "
+                    f"migrating task {task_id}."
+                )
+
+    @staticmethod
+    def _validate_transition(
+        task_id: str,
+        current: TaskState,
+        target: TaskState,
+    ) -> None:
+        if not can_transition_runtime_state(current, target):
+            raise RuntimeTaskRepositoryError(
+                f"Invalid runtime state transition for {task_id}: "
+                f"{current.value} -> {target.value}."
+            )
+
+    @staticmethod
     def _row_to_task(
         row: Any,
     ) -> RuntimeTaskRecord:
@@ -852,6 +1169,29 @@ class RuntimeTaskRepository:
                 row["memory_request_mib"]
             ),
             gpu_request=int(row["gpu_request"]),
+            accelerator_resource_name=str(
+                row["accelerator_resource_name"]
+            ),
+            accelerator_product=(
+                str(row["accelerator_product"])
+                if row["accelerator_product"] is not None
+                else None
+            ),
+            accelerator_memory_mib=(
+                int(row["accelerator_memory_mib"])
+                if row["accelerator_memory_mib"] is not None
+                else None
+            ),
+            accelerator_interconnect=(
+                str(row["accelerator_interconnect"])
+                if row["accelerator_interconnect"] is not None
+                else None
+            ),
+            accelerator_partition_mode=(
+                str(row["accelerator_partition_mode"])
+                if row["accelerator_partition_mode"] is not None
+                else None
+            ),
             bandwidth_gbps=float(
                 row["bandwidth_gbps"]
             ),
@@ -887,6 +1227,7 @@ class RuntimeTaskRepository:
                 if row["failure_reason"] is not None
                 else None
             ),
+            version=int(row["version"]),
             created_at=str(row["created_at"]),
             updated_at=str(row["updated_at"]),
         )

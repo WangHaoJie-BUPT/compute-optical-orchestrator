@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from orchestrator.models.identifiers import TASK_ID_PATTERN
 from orchestrator.models.runtime_task import RuntimeTaskRequest
 
 
@@ -15,6 +16,7 @@ class TaskSubmitRequest(BaseModel):
     task_id: str = Field(
         min_length=1,
         max_length=128,
+        pattern=TASK_ID_PATTERN,
     )
 
     source_access_node: str = Field(
@@ -25,6 +27,30 @@ class TaskSubmitRequest(BaseModel):
     cpu_request_m: int = Field(gt=0)
     memory_request_mib: int = Field(gt=0)
     gpu_request: int = Field(default=0, ge=0)
+    accelerator_resource_name: str = Field(
+        default="nvidia.com/gpu",
+        min_length=3,
+        max_length=253,
+    )
+    accelerator_product: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
+    accelerator_memory_mib: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    accelerator_interconnect: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+    )
+    accelerator_partition_mode: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+    )
 
     bandwidth_gbps: float = Field(gt=0)
 
@@ -82,6 +108,19 @@ class TaskSubmitRequest(BaseModel):
             shell_command=self.shell_command,
             cpu_limit_m=self.cpu_limit_m,
             memory_limit_mib=self.memory_limit_mib,
+            accelerator_resource_name=(
+                self.accelerator_resource_name
+            ),
+            accelerator_product=self.accelerator_product,
+            accelerator_memory_mib=(
+                self.accelerator_memory_mib
+            ),
+            accelerator_interconnect=(
+                self.accelerator_interconnect
+            ),
+            accelerator_partition_mode=(
+                self.accelerator_partition_mode
+            ),
         )
 
 
@@ -90,6 +129,7 @@ class TaskSubmissionResponse(BaseModel):
 
     task_id: str
     state: str
+    version: int
 
     selected_site_id: str | None
     selected_node_name: str | None
@@ -136,12 +176,18 @@ class TaskDetailResponse(BaseModel):
 
     task_id: str
     state: str
+    version: int
 
     source_access_node: str
 
     cpu_request_m: int
     memory_request_mib: int
     gpu_request: int
+    accelerator_resource_name: str
+    accelerator_product: str | None
+    accelerator_memory_mib: int | None
+    accelerator_interconnect: str | None
+    accelerator_partition_mode: str | None
 
     cpu_limit_m: int
     memory_limit_mib: int
@@ -173,6 +219,8 @@ class HealthResponse(BaseModel):
     status: str
     controller_alive: bool
     restored_allocations: int
+    recovered_admission_dispatches: int
+    admission_queue_active: int
 
     last_reconciliation_at: str | None
     last_controller_error: str | None

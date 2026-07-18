@@ -12,6 +12,11 @@ from orchestrator.adapters.kubernetes_adapter import (
     KubernetesAdapter,
 )
 from orchestrator.models.kubernetes_resources import (
+    ACCELERATOR_INTERCONNECT_LABEL,
+    ACCELERATOR_MEMORY_LABEL,
+    ACCELERATOR_PARTITION_LABEL,
+    ACCELERATOR_PRODUCT_LABEL,
+    AcceleratorInventory,
     KubernetesSiteResources,
 )
 
@@ -44,6 +49,12 @@ _DECIMAL_MEMORY_FACTORS = {
     "E": Decimal(1000 ** 6),
     "m": Decimal("0.001"),
 }
+
+DEFAULT_ACCELERATOR_RESOURCE_NAMES = (
+    "nvidia.com/gpu",
+    "huawei.com/Ascend910",
+    "amd.com/gpu",
+)
 
 
 def _parse_quantity(value: Any) -> tuple[Decimal, str]:
@@ -132,6 +143,7 @@ class KubernetesResourceDiscovery:
         site_mapping_file: str | Path,
         site_label: str = "compute-site",
         gpu_resource_name: str = "nvidia.com/gpu",
+        accelerator_resource_names: tuple[str, ...] | None = None,
     ) -> None:
         self.kubernetes_adapter = kubernetes_adapter
         self.site_mapping_file = (
@@ -139,6 +151,13 @@ class KubernetesResourceDiscovery:
         )
         self.site_label = site_label
         self.gpu_resource_name = gpu_resource_name
+        configured_names = (
+            accelerator_resource_names
+            or DEFAULT_ACCELERATOR_RESOURCE_NAMES
+        )
+        self.accelerator_resource_names = tuple(
+            dict.fromkeys((gpu_resource_name, *configured_names))
+        )
 
         self.site_mapping = self._load_site_mapping()
 
@@ -198,7 +217,7 @@ class KubernetesResourceDiscovery:
                 {
                     "cpu_m": 0,
                     "memory_bytes": 0,
-                    "gpu": 0,
+                    "accelerators": {},
                 },
             )
 
@@ -206,7 +225,14 @@ class KubernetesResourceDiscovery:
             aggregate["memory_bytes"] += (
                 pod_request["memory_bytes"]
             )
-            aggregate["gpu"] += pod_request["gpu"]
+            for resource_name, count in (
+                pod_request["accelerators"].items()
+            ):
+                accelerator_totals = aggregate["accelerators"]
+                accelerator_totals[resource_name] = (
+                    accelerator_totals.get(resource_name, 0)
+                    + count
+                )
 
             active_pods_by_node[node_name] = (
                 active_pods_by_node.get(node_name, 0) + 1
@@ -267,17 +293,69 @@ class KubernetesResourceDiscovery:
             allocatable_memory_bytes = parse_memory_bytes(
                 allocatable.get("memory", "0")
             )
-            allocatable_gpu = parse_integer_resource(
-                allocatable.get(self.gpu_resource_name, "0")
-            )
-
             requested = requested_by_node.get(
                 node_name,
                 {
                     "cpu_m": 0,
                     "memory_bytes": 0,
-                    "gpu": 0,
+                    "accelerators": {},
                 },
+            )
+
+            accelerator_inventories: list[
+                AcceleratorInventory
+            ] = []
+            for resource_name in self.accelerator_resource_names:
+                allocatable_count = parse_integer_resource(
+                    allocatable.get(resource_name, "0")
+                )
+                requested_count = int(
+                    requested["accelerators"].get(
+                        resource_name,
+                        0,
+                    )
+                )
+                if allocatable_count == 0 and requested_count == 0:
+                    continue
+                accelerator_inventories.append(
+                    AcceleratorInventory(
+                        resource_name=resource_name,
+                        allocatable=allocatable_count,
+                        requested=requested_count,
+                        available=max(
+                            allocatable_count - requested_count,
+                            0,
+                        ),
+                        product=self._optional_label(
+                            labels,
+                            ACCELERATOR_PRODUCT_LABEL,
+                            "nvidia.com/gpu.product",
+                        ),
+                        memory_mib=self._optional_integer_label(
+                            labels,
+                            ACCELERATOR_MEMORY_LABEL,
+                            "nvidia.com/gpu.memory",
+                        ),
+                        interconnect=self._optional_label(
+                            labels,
+                            ACCELERATOR_INTERCONNECT_LABEL,
+                        ),
+                        partition_mode=self._optional_label(
+                            labels,
+                            ACCELERATOR_PARTITION_LABEL,
+                            "nvidia.com/mig.strategy",
+                        ),
+                    )
+                )
+
+            legacy_gpu = next(
+                (
+                    inventory
+                    for inventory in accelerator_inventories
+                    if inventory.resource_name
+                    == self.gpu_resource_name
+                ),
+                None,
             )
 
             ready = self._node_is_ready(status)
@@ -315,15 +393,27 @@ class KubernetesResourceDiscovery:
                         - requested["memory_bytes"],
                         0,
                     ),
-                    allocatable_gpu=allocatable_gpu,
-                    requested_gpu=requested["gpu"],
-                    available_gpu=max(
-                        allocatable_gpu - requested["gpu"],
-                        0,
+                    allocatable_gpu=(
+                        legacy_gpu.allocatable
+                        if legacy_gpu is not None
+                        else 0
+                    ),
+                    requested_gpu=(
+                        legacy_gpu.requested
+                        if legacy_gpu is not None
+                        else 0
+                    ),
+                    available_gpu=(
+                        legacy_gpu.available
+                        if legacy_gpu is not None
+                        else 0
                     ),
                     active_pod_count=active_pods_by_node.get(
                         node_name,
                         0,
+                    ),
+                    accelerators=tuple(
+                        accelerator_inventories
                     ),
                 )
             )
@@ -388,7 +478,7 @@ class KubernetesResourceDiscovery:
     def _calculate_pod_request(
         self,
         pod: dict[str, Any],
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         """
         Calculate the effective scheduler request of one Pod.
 
@@ -402,13 +492,13 @@ class KubernetesResourceDiscovery:
             return {
                 "cpu_m": 0,
                 "memory_bytes": 0,
-                "gpu": 0,
+                "accelerators": {},
             }
 
         regular_total = {
             "cpu_m": 0,
             "memory_bytes": 0,
-            "gpu": 0,
+            "accelerators": {},
         }
 
         containers = spec.get("containers", [])
@@ -421,12 +511,18 @@ class KubernetesResourceDiscovery:
                 regular_total["memory_bytes"] += (
                     request["memory_bytes"]
                 )
-                regular_total["gpu"] += request["gpu"]
+                for resource_name, count in (
+                    request["accelerators"].items()
+                ):
+                    totals = regular_total["accelerators"]
+                    totals[resource_name] = (
+                        totals.get(resource_name, 0) + count
+                    )
 
         init_max = {
             "cpu_m": 0,
             "memory_bytes": 0,
-            "gpu": 0,
+            "accelerators": {},
         }
 
         init_containers = spec.get("initContainers", [])
@@ -443,10 +539,14 @@ class KubernetesResourceDiscovery:
                     init_max["memory_bytes"],
                     request["memory_bytes"],
                 )
-                init_max["gpu"] = max(
-                    init_max["gpu"],
-                    request["gpu"],
-                )
+                for resource_name, count in (
+                    request["accelerators"].items()
+                ):
+                    maxima = init_max["accelerators"]
+                    maxima[resource_name] = max(
+                        maxima.get(resource_name, 0),
+                        count,
+                    )
 
         effective = {
             "cpu_m": max(
@@ -457,10 +557,19 @@ class KubernetesResourceDiscovery:
                 regular_total["memory_bytes"],
                 init_max["memory_bytes"],
             ),
-            "gpu": max(
-                regular_total["gpu"],
-                init_max["gpu"],
-            ),
+            "accelerators": {
+                resource_name: max(
+                    regular_total["accelerators"].get(
+                        resource_name,
+                        0,
+                    ),
+                    init_max["accelerators"].get(
+                        resource_name,
+                        0,
+                    ),
+                )
+                for resource_name in self.accelerator_resource_names
+            },
         }
 
         overhead = spec.get("overhead", {})
@@ -478,12 +587,12 @@ class KubernetesResourceDiscovery:
     def _container_request(
         self,
         container: Any,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         if not isinstance(container, dict):
             return {
                 "cpu_m": 0,
                 "memory_bytes": 0,
-                "gpu": 0,
+                "accelerators": {},
             }
 
         resources = container.get("resources", {})
@@ -503,10 +612,45 @@ class KubernetesResourceDiscovery:
             "memory_bytes": parse_memory_bytes(
                 requests.get("memory", "0")
             ),
-            "gpu": parse_integer_resource(
-                requests.get(self.gpu_resource_name, "0")
-            ),
+            "accelerators": {
+                resource_name: parse_integer_resource(
+                    requests.get(resource_name, "0")
+                )
+                for resource_name in self.accelerator_resource_names
+            },
         }
+
+    @staticmethod
+    def _optional_label(
+        labels: dict[str, Any],
+        *names: str,
+    ) -> str | None:
+        for name in names:
+            value = labels.get(name)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    @classmethod
+    def _optional_integer_label(
+        cls,
+        labels: dict[str, Any],
+        *names: str,
+    ) -> int | None:
+        value = cls._optional_label(labels, *names)
+        if value is None:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise KubernetesResourceDiscoveryError(
+                f"Accelerator memory label must be an integer: {value!r}."
+            ) from exc
+        if parsed <= 0:
+            raise KubernetesResourceDiscoveryError(
+                "Accelerator memory label must be positive."
+            )
+        return parsed
 
     @staticmethod
     def _node_is_ready(

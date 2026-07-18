@@ -25,6 +25,7 @@ from orchestrator.adapters.kubernetes_resource_discovery import (
     KubernetesResourceDiscoveryError,
 )
 from orchestrator.models.kubernetes_resources import (
+    AcceleratorInventory,
     KubernetesSiteResources,
 )
 from orchestrator.models.runtime_task import (
@@ -56,6 +57,7 @@ class KubernetesCandidatePlan:
     available_cpu_m: int
     available_memory_mib: float
     available_gpu: int
+    accelerators: tuple[AcceleratorInventory, ...]
 
     spectrum_slot: SpectrumSlot | None
     fiber_links: tuple[str, ...]
@@ -275,7 +277,7 @@ class KubernetesJointPlanner:
         if not site.can_host(
             cpu_m=task.cpu_request_m,
             memory_bytes=task.memory_request_bytes,
-            gpu=task.gpu_request,
+            gpu=0,
         ):
             reason = (
                 "Insufficient live Kubernetes resources: "
@@ -288,6 +290,43 @@ class KubernetesJointPlanner:
                 site,
                 reason,
             )
+
+        if task.gpu_request > 0:
+            inventory = site.accelerator_inventory(
+                task.accelerator_resource_name
+            )
+            if inventory is None:
+                return self._failed_plan(
+                    site,
+                    "Accelerator resource is unavailable: "
+                    f"{task.accelerator_resource_name}",
+                )
+            if not inventory.matches(
+                count=task.gpu_request,
+                product=task.accelerator_product,
+                minimum_memory_mib=(
+                    task.accelerator_memory_mib
+                ),
+                interconnect=task.accelerator_interconnect,
+                partition_mode=(
+                    task.accelerator_partition_mode
+                ),
+            ):
+                return self._failed_plan(
+                    site,
+                    "Accelerator constraints do not match: "
+                    f"requested resource="
+                    f"{task.accelerator_resource_name}, "
+                    f"count={task.gpu_request}, "
+                    f"product={task.accelerator_product}, "
+                    f"minimum_memory_mib="
+                    f"{task.accelerator_memory_mib}, "
+                    f"interconnect="
+                    f"{task.accelerator_interconnect}, "
+                    f"partition_mode="
+                    f"{task.accelerator_partition_mode}; "
+                    f"available={inventory.to_dict()}",
+                )
 
         prefix = f"{task.task_id}-{site.site_id}"
 
@@ -478,6 +517,7 @@ class KubernetesJointPlanner:
                     available_memory_mib
                 ),
                 available_gpu=site.available_gpu,
+                accelerators=site.accelerators,
                 spectrum_slot=candidate_slot,
                 fiber_links=tuple(verified_links),
                 route=tuple(verified.route),
@@ -529,10 +569,15 @@ class KubernetesJointPlanner:
         if task.gpu_request == 0:
             gpu_remaining_ratio = 1.0
         else:
+            inventory = site.accelerator_inventory(
+                task.accelerator_resource_name
+            )
+            if inventory is None:
+                return 0.0
             gpu_remaining_ratio = (
-                site.available_gpu
+                inventory.available
                 - task.gpu_request
-            ) / max(site.allocatable_gpu, 1)
+            ) / max(inventory.allocatable, 1)
 
         cpu_remaining_ratio = max(
             min(cpu_remaining_ratio, 1.0),
@@ -575,6 +620,7 @@ class KubernetesJointPlanner:
                 / (1024 * 1024)
             ),
             available_gpu=site.available_gpu,
+            accelerators=site.accelerators,
             spectrum_slot=None,
             fiber_links=(),
             route=(),

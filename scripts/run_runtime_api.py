@@ -75,6 +75,37 @@ def parse_args() -> argparse.Namespace:
         default=2.0,
     )
 
+    parser.add_argument(
+        "--admission-aging-seconds",
+        type=float,
+        default=60.0,
+    )
+    parser.add_argument(
+        "--admission-max-active-total",
+        type=int,
+        default=1000,
+    )
+    parser.add_argument(
+        "--admission-dispatch-timeout-seconds",
+        type=float,
+        default=300.0,
+    )
+    parser.add_argument(
+        "--admission-lease-seconds",
+        type=float,
+        default=300.0,
+    )
+    parser.add_argument(
+        "--admission-max-active-per-tenant",
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        "--admission-max-dispatch-per-cycle",
+        type=int,
+        default=1,
+    )
+
     return parser.parse_args()
 
 
@@ -151,6 +182,24 @@ def main() -> None:
         database_file=Path(args.database),
         controller_interval_seconds=(
             args.controller_interval
+        ),
+        admission_aging_seconds=(
+            args.admission_aging_seconds
+        ),
+        admission_max_active_total=(
+            args.admission_max_active_total
+        ),
+        admission_dispatch_timeout_seconds=(
+            args.admission_dispatch_timeout_seconds
+        ),
+        admission_lease_seconds=(
+            args.admission_lease_seconds
+        ),
+        admission_max_active_per_tenant=(
+            args.admission_max_active_per_tenant
+        ),
+        admission_max_dispatch_per_cycle=(
+            args.admission_max_dispatch_per_cycle
         ),
     )
 

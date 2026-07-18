@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from orchestrator.models.identifiers import validate_task_id
+
 
 @dataclass(frozen=True)
 class ComputeSite:
@@ -77,6 +79,9 @@ class TaskRequest:
     memory_gb_required: int
     gpu_required: int
     bandwidth_gbps: float
+
+    def __post_init__(self) -> None:
+        validate_task_id(self.task_id)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskRequest":

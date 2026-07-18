@@ -178,6 +178,16 @@ def main() -> None:
             ),
         )
 
+        queued_count = require_value(
+            initial_samples,
+            "compute_optical_admission_tasks",
+            {"state": "QUEUED"},
+        )
+        active_tenants = require_value(
+            initial_samples,
+            "compute_optical_admission_active_tenants",
+        )
+
         if collector_up != 1:
             raise AssertionError(
                 "Prometheus collector is not healthy."
@@ -186,6 +196,11 @@ def main() -> None:
         if discovery_up != 1:
             raise AssertionError(
                 "Kubernetes resource discovery failed."
+            )
+
+        if queued_count != 0 or active_tenants != 0:
+            raise AssertionError(
+                "A new admission queue should be empty."
             )
 
         site_ready_samples = [

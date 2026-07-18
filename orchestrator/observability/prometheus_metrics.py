@@ -21,6 +21,7 @@ from prometheus_client.core import (
 )
 
 from orchestrator.models.task_state import TaskState
+from orchestrator.models.admission import AdmissionState
 
 
 ContextGetter = Callable[[], Any | None]
@@ -170,6 +171,27 @@ class RuntimePrometheusCollector:
                 self.TERMINAL_STATES,
             ).fetchall()
 
+            admission_rows = connection.execute(
+                """
+                SELECT state, COUNT(*) AS task_count
+                FROM runtime_admission_queue
+                GROUP BY state
+                """
+            ).fetchall()
+
+            admission_wait_row = connection.execute(
+                """
+                SELECT MIN(enqueued_at) AS oldest_enqueued_at,
+                       COUNT(DISTINCT tenant_id) AS active_tenants
+                FROM runtime_admission_queue
+                WHERE state IN (?, ?)
+                """,
+                (
+                    AdmissionState.QUEUED.value,
+                    AdmissionState.DISPATCHING.value,
+                ),
+            ).fetchone()
+
         state_counts = {
             state.value: 0
             for state in TaskState
@@ -205,6 +227,59 @@ class RuntimePrometheusCollector:
         )
 
         yield task_total_metric
+
+        admission_counts = {
+            state.value: 0 for state in AdmissionState
+        }
+        for row in admission_rows:
+            admission_counts[str(row["state"])] = int(
+                row["task_count"]
+            )
+
+        admission_metric = GaugeMetricFamily(
+            "compute_optical_admission_tasks",
+            "Number of admission queue records by state.",
+            labels=["state"],
+        )
+        for state_name in sorted(admission_counts):
+            admission_metric.add_metric(
+                [state_name],
+                admission_counts[state_name],
+            )
+        yield admission_metric
+
+        oldest_enqueued_at = (
+            float(admission_wait_row["oldest_enqueued_at"])
+            if (
+                admission_wait_row is not None
+                and admission_wait_row["oldest_enqueued_at"]
+                is not None
+            )
+            else None
+        )
+        wait_metric = GaugeMetricFamily(
+            "compute_optical_admission_oldest_wait_seconds",
+            "Current wait time of the oldest active queued task.",
+        )
+        wait_metric.add_metric(
+            [],
+            max(time.time() - oldest_enqueued_at, 0.0)
+            if oldest_enqueued_at is not None
+            else 0.0,
+        )
+        yield wait_metric
+
+        tenant_metric = GaugeMetricFamily(
+            "compute_optical_admission_active_tenants",
+            "Number of tenants with queued or dispatching tasks.",
+        )
+        tenant_metric.add_metric(
+            [],
+            int(admission_wait_row["active_tenants"] or 0)
+            if admission_wait_row is not None
+            else 0,
+        )
+        yield tenant_metric
 
         execution_metric = GaugeMetricFamily(
             "compute_optical_kubernetes_executions",

@@ -28,6 +28,91 @@ class TaskState(str, Enum):
     RELEASE_FAILED = "RELEASE_FAILED"
 
 
+RUNTIME_STATE_TRANSITIONS = {
+    TaskState.PENDING: frozenset(
+        {
+            TaskState.PLANNING,
+            TaskState.RELEASING,
+            TaskState.FAILED,
+        }
+    ),
+    TaskState.PLANNING: frozenset(
+        {
+            TaskState.RESERVED,
+            TaskState.BLOCKED,
+            TaskState.RELEASING,
+            TaskState.FAILED,
+        }
+    ),
+    TaskState.RESERVED: frozenset(
+        {
+            TaskState.SUBMITTING,
+            TaskState.RUNNING,
+            TaskState.RELEASING,
+            TaskState.FAILED,
+        }
+    ),
+    TaskState.SUBMITTING: frozenset(
+        {
+            TaskState.RUNNING,
+            TaskState.RELEASING,
+            TaskState.FAILED,
+        }
+    ),
+    TaskState.RUNNING: frozenset(
+        {
+            TaskState.COMPLETED,
+            TaskState.RELEASING,
+            TaskState.FAILED,
+        }
+    ),
+    TaskState.COMPLETED: frozenset(
+        {
+            TaskState.RELEASING,
+            TaskState.RELEASED,
+            TaskState.RELEASE_FAILED,
+        }
+    ),
+    TaskState.BLOCKED: frozenset(
+        {
+            TaskState.RELEASING,
+            TaskState.FAILED,
+        }
+    ),
+    TaskState.RELEASING: frozenset(
+        {
+            TaskState.RELEASED,
+            TaskState.RELEASE_FAILED,
+            TaskState.FAILED,
+            TaskState.CANCELLED,
+        }
+    ),
+    TaskState.RELEASE_FAILED: frozenset(
+        {
+            TaskState.RELEASING,
+            TaskState.RELEASED,
+            TaskState.FAILED,
+            TaskState.CANCELLED,
+        }
+    ),
+    TaskState.RELEASED: frozenset(),
+    TaskState.FAILED: frozenset(),
+    TaskState.CANCELLED: frozenset(),
+}
+
+
+def can_transition_runtime_state(
+    current: TaskState,
+    target: TaskState,
+) -> bool:
+    """Return whether a runtime state transition is valid."""
+
+    return (
+        current == target
+        or target in RUNTIME_STATE_TRANSITIONS[current]
+    )
+
+
 ACTIVE_ALLOCATION_STATES = frozenset(
     {
         TaskState.RESERVED,

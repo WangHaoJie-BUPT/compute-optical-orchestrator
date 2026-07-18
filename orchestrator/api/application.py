@@ -26,6 +26,9 @@ from orchestrator.adapters.kubernetes_adapter import (
     KubernetesAdapter,
     KubernetesAdapterError,
 )
+from orchestrator.adapters.kubernetes_api_adapter import (
+    KubernetesApiAdapter,
+)
 from orchestrator.adapters.kubernetes_resource_discovery import (
     KubernetesResourceDiscovery,
     KubernetesResourceDiscoveryError,
@@ -44,6 +47,10 @@ from orchestrator.controllers.runtime_reconciliation_controller import (
     ReconciliationBatchResult,
     RuntimeReconciliationController,
 )
+from orchestrator.controllers.admission_controller import (
+    AdmissionBatchResult,
+    AdmissionController,
+)
 from orchestrator.models.runtime_persistence import (
     RuntimeExecutionRecord,
     RuntimeOpticalRecord,
@@ -52,6 +59,9 @@ from orchestrator.models.runtime_persistence import (
 from orchestrator.models.task_state import TaskState
 from orchestrator.repositories.controller_lease_repository import (
     ControllerLeaseRepository,
+)
+from orchestrator.repositories.admission_queue_repository import (
+    AdmissionQueueRepository,
 )
 from orchestrator.repositories.runtime_task_repository import (
     RuntimeTaskRepository,
@@ -96,6 +106,13 @@ class RuntimeAPISettings:
 
     start_controller: bool = True
 
+    admission_aging_seconds: float = 60.0
+    admission_dispatch_timeout_seconds: float = 300.0
+    admission_lease_seconds: float = 300.0
+    admission_max_active_total: int = 1000
+    admission_max_active_per_tenant: int = 100
+    admission_max_dispatch_per_cycle: int = 1
+
     topology_file: Path = (
         PROJECT_ROOT
         / "topologies"
@@ -134,6 +151,7 @@ class RuntimeAPIContext:
     repository: RuntimeTaskRepository
     event_repository: TaskEventRepository
     lease_repository: ControllerLeaseRepository
+    admission_repository: AdmissionQueueRepository
 
     kubernetes_adapter: KubernetesAdapter
     resource_discovery: KubernetesResourceDiscovery
@@ -141,6 +159,7 @@ class RuntimeAPIContext:
     optical_manager: OpticalResourceManager
     runtime_service: PersistentKubernetesRuntimeService
     controller: RuntimeReconciliationController
+    admission_controller: AdmissionController
 
     operation_lock: threading.RLock = field(
         default_factory=threading.RLock
@@ -160,6 +179,8 @@ class RuntimeAPIContext:
     last_reconciliation_at: str | None = None
     last_controller_error: str | None = None
     last_reconciliation: ReconciliationBatchResult | None = None
+    recovered_admission_dispatches: int = 0
+    last_admission: AdmissionBatchResult | None = None
 
 
 def utc_now() -> str:
@@ -193,7 +214,18 @@ def build_runtime_context(
     )
     lease_repository.initialize()
 
-    kubernetes_adapter = KubernetesAdapter(
+    admission_repository = AdmissionQueueRepository(
+        database,
+        aging_seconds=settings.admission_aging_seconds,
+        dispatch_timeout_seconds=(
+            settings.admission_dispatch_timeout_seconds
+        ),
+    )
+    recovered_admission_dispatches = (
+        admission_repository.initialize()
+    )
+
+    kubernetes_adapter = KubernetesApiAdapter(
         namespace=settings.kubernetes_namespace,
         context=settings.kubernetes_context,
     )
@@ -242,17 +274,35 @@ def build_runtime_context(
         ),
     )
 
+    admission_controller = AdmissionController(
+        queue_repository=admission_repository,
+        runtime_repository=repository,
+        runtime_service=runtime_service,
+        lease_repository=lease_repository,
+        topology_file=settings.topology_file,
+        equipment_file=settings.equipment_file,
+        lease_seconds=settings.admission_lease_seconds,
+        max_dispatch_per_cycle=(
+            settings.admission_max_dispatch_per_cycle
+        ),
+    )
+
     context = RuntimeAPIContext(
         settings=settings,
         database=database,
         repository=repository,
         event_repository=event_repository,
         lease_repository=lease_repository,
+        admission_repository=admission_repository,
         kubernetes_adapter=kubernetes_adapter,
         resource_discovery=resource_discovery,
         optical_manager=optical_manager,
         runtime_service=runtime_service,
         controller=controller,
+        admission_controller=admission_controller,
+        recovered_admission_dispatches=(
+            recovered_admission_dispatches
+        ),
     )
 
     context.restored_allocations = (
@@ -277,10 +327,14 @@ def controller_loop(
             # Submission, recovery and reconciliation all touch the
             # same in-memory OpticalResourceManager.
             with context.operation_lock:
+                admission_result = (
+                    context.admission_controller.run_once()
+                )
                 result = context.controller.run_once()
 
             with context.status_lock:
                 context.last_reconciliation = result
+                context.last_admission = admission_result
                 context.last_reconciliation_at = utc_now()
                 context.last_controller_error = None
 
@@ -395,10 +449,24 @@ def task_response(
     return TaskDetailResponse(
         task_id=task.task_id,
         state=record.state.value,
+        version=record.version,
         source_access_node=task.source_access_node,
         cpu_request_m=task.cpu_request_m,
         memory_request_mib=task.memory_request_mib,
         gpu_request=task.gpu_request,
+        accelerator_resource_name=(
+            task.accelerator_resource_name
+        ),
+        accelerator_product=task.accelerator_product,
+        accelerator_memory_mib=(
+            task.accelerator_memory_mib
+        ),
+        accelerator_interconnect=(
+            task.accelerator_interconnect
+        ),
+        accelerator_partition_mode=(
+            task.accelerator_partition_mode
+        ),
         cpu_limit_m=task.effective_cpu_limit_m,
         memory_limit_mib=(
             task.effective_memory_limit_mib
@@ -491,6 +559,7 @@ def create_app(
         context = get_context(request)
 
         thread = context.controller_thread
+        queue_stats = context.admission_repository.stats()
 
         with context.status_lock:
             return HealthResponse(
@@ -506,6 +575,10 @@ def create_app(
                 restored_allocations=(
                     context.restored_allocations
                 ),
+                recovered_admission_dispatches=(
+                    context.recovered_admission_dispatches
+                ),
+                admission_queue_active=queue_stats.active,
                 last_reconciliation_at=(
                     context.last_reconciliation_at
                 ),
@@ -628,6 +701,7 @@ def create_app(
         return TaskSubmissionResponse(
             task_id=result.task_record.task.task_id,
             state=result.task_record.state.value,
+            version=result.task_record.version,
             selected_site_id=(
                 result.task_record.selected_site_id
             ),

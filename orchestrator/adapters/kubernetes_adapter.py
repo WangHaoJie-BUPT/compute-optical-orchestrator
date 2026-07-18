@@ -12,6 +12,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from orchestrator.models.kubernetes_resources import (
+    ACCELERATOR_INTERCONNECT_LABEL,
+    ACCELERATOR_MEMORY_LABEL,
+    ACCELERATOR_PARTITION_LABEL,
+    ACCELERATOR_PRODUCT_LABEL,
+)
+
 
 class KubernetesAdapterError(RuntimeError):
     """Raised when a kubectl operation fails."""
@@ -30,6 +37,189 @@ class KubernetesJobResult:
     pod_phase: str
     succeeded: bool
     logs: str
+
+
+def build_kubernetes_job_manifest(
+    *,
+    namespace: str,
+    task_id: str,
+    site_id: str,
+    image: str,
+    shell_command: str,
+    cpu_request: str = "100m",
+    memory_request: str = "32Mi",
+    cpu_limit: str = "200m",
+    memory_limit: str = "64Mi",
+    gpu_request: int = 0,
+    gpu_resource_name: str = "nvidia.com/gpu",
+    image_pull_policy: str = "Never",
+    node_name: str | None = None,
+    accelerator_product: str | None = None,
+    accelerator_memory_mib: int | None = None,
+    accelerator_interconnect: str | None = None,
+    accelerator_partition_mode: str | None = None,
+) -> dict[str, Any]:
+    """Build the shared Job manifest used by both Kubernetes clients."""
+
+    job_name = KubernetesAdapter.job_name_for_task_value(task_id)
+    task_label = KubernetesAdapter.label_value(task_id)
+    resource_requests: dict[str, Any] = {
+        "cpu": cpu_request,
+        "memory": memory_request,
+    }
+    resource_limits: dict[str, Any] = {
+        "cpu": cpu_limit,
+        "memory": memory_limit,
+    }
+
+    if gpu_request > 0:
+        resource_requests[gpu_resource_name] = gpu_request
+        resource_limits[gpu_resource_name] = gpu_request
+
+    node_selector = {"compute-site": site_id}
+    if node_name is not None:
+        node_selector["kubernetes.io/hostname"] = node_name
+
+    manifest = {
+        "apiVersion": "batch/v1",
+        "kind": "Job",
+        "metadata": {
+            "name": job_name,
+            "namespace": namespace,
+            "labels": {
+                "app": "compute-optical-task",
+                "orchestrator-task-id": task_label,
+            },
+        },
+        "spec": {
+            "backoffLimit": 0,
+            "ttlSecondsAfterFinished": 600,
+            "template": {
+                "metadata": {
+                    "labels": {
+                        "app": "compute-optical-task",
+                        "orchestrator-task-id": task_label,
+                    },
+                },
+                "spec": {
+                    "restartPolicy": "Never",
+                    "nodeSelector": node_selector,
+                    "containers": [
+                        {
+                            "name": "worker",
+                            "image": image,
+                            "imagePullPolicy": image_pull_policy,
+                            "resources": {
+                                "requests": resource_requests,
+                                "limits": resource_limits,
+                            },
+                            "env": [
+                                {"name": "TASK_ID", "value": task_id},
+                                {
+                                    "name": "EXPECTED_SITE_ID",
+                                    "value": site_id,
+                                },
+                                {
+                                    "name": "NODE_NAME",
+                                    "valueFrom": {
+                                        "fieldRef": {
+                                            "fieldPath": "spec.nodeName",
+                                        }
+                                    },
+                                },
+                                {
+                                    "name": "POD_NAME",
+                                    "valueFrom": {
+                                        "fieldRef": {
+                                            "fieldPath": "metadata.name",
+                                        }
+                                    },
+                                },
+                            ],
+                            "command": ["sh", "-c", shell_command],
+                        }
+                    ],
+                },
+            },
+        },
+    }
+
+    match_expressions: list[dict[str, Any]] = []
+    for key, value in (
+        (ACCELERATOR_PRODUCT_LABEL, accelerator_product),
+        (
+            ACCELERATOR_INTERCONNECT_LABEL,
+            accelerator_interconnect,
+        ),
+        (
+            ACCELERATOR_PARTITION_LABEL,
+            accelerator_partition_mode,
+        ),
+    ):
+        if value is not None:
+            match_expressions.append(
+                {"key": key, "operator": "In", "values": [value]}
+            )
+
+    if accelerator_memory_mib is not None:
+        match_expressions.append(
+            {
+                "key": ACCELERATOR_MEMORY_LABEL,
+                "operator": "Gt",
+                "values": [str(accelerator_memory_mib - 1)],
+            }
+        )
+
+    if match_expressions:
+        node_selector_terms = [
+            {"matchExpressions": match_expressions}
+        ]
+
+        if gpu_resource_name == "nvidia.com/gpu":
+            nvidia_expressions: list[dict[str, Any]] = []
+            for key, value in (
+                ("nvidia.com/gpu.product", accelerator_product),
+                (
+                    "nvidia.com/mig.strategy",
+                    accelerator_partition_mode,
+                ),
+                (
+                    ACCELERATOR_INTERCONNECT_LABEL,
+                    accelerator_interconnect,
+                ),
+            ):
+                if value is not None:
+                    nvidia_expressions.append(
+                        {
+                            "key": key,
+                            "operator": "In",
+                            "values": [value],
+                        }
+                    )
+            if accelerator_memory_mib is not None:
+                nvidia_expressions.append(
+                    {
+                        "key": "nvidia.com/gpu.memory",
+                        "operator": "Gt",
+                        "values": [
+                            str(accelerator_memory_mib - 1)
+                        ],
+                    }
+                )
+            if nvidia_expressions != match_expressions:
+                node_selector_terms.append(
+                    {"matchExpressions": nvidia_expressions}
+                )
+
+        manifest["spec"]["template"]["spec"]["affinity"] = {
+            "nodeAffinity": {
+                "requiredDuringSchedulingIgnoredDuringExecution": {
+                    "nodeSelectorTerms": node_selector_terms
+                }
+            }
+        }
+
+    return manifest
 
 
 class KubernetesAdapter:
@@ -147,6 +337,11 @@ class KubernetesAdapter:
         gpu_request: int = 0,
         gpu_resource_name: str = "nvidia.com/gpu",
         image_pull_policy: str = "Never",
+        node_name: str | None = None,
+        accelerator_product: str | None = None,
+        accelerator_memory_mib: int | None = None,
+        accelerator_interconnect: str | None = None,
+        accelerator_partition_mode: str | None = None,
     ) -> str:
         """
         Create one Kubernetes Job constrained to a compute-site label.
@@ -157,94 +352,25 @@ class KubernetesAdapter:
         """
 
         job_name = self.job_name_for_task(task_id)
-        task_label = self.label_value(task_id)
-
-        resource_requests: dict[str, Any] = {
-            "cpu": cpu_request,
-            "memory": memory_request,
-        }
-
-        resource_limits: dict[str, Any] = {
-            "cpu": cpu_limit,
-            "memory": memory_limit,
-        }
-
-        if gpu_request > 0:
-            resource_requests[gpu_resource_name] = gpu_request
-            resource_limits[gpu_resource_name] = gpu_request
-
-        manifest: dict[str, Any] = {
-            "apiVersion": "batch/v1",
-            "kind": "Job",
-            "metadata": {
-                "name": job_name,
-                "namespace": self.namespace,
-                "labels": {
-                    "app": "compute-optical-task",
-                    "orchestrator-task-id": task_label,
-                },
-            },
-            "spec": {
-                "backoffLimit": 0,
-                "ttlSecondsAfterFinished": 600,
-                "template": {
-                    "metadata": {
-                        "labels": {
-                            "app": "compute-optical-task",
-                            "orchestrator-task-id": task_label,
-                        },
-                    },
-                    "spec": {
-                        "restartPolicy": "Never",
-                        "nodeSelector": {
-                            "compute-site": site_id,
-                        },
-                        "containers": [
-                            {
-                                "name": "worker",
-                                "image": image,
-                                "imagePullPolicy": image_pull_policy,
-                                "resources": {
-                                    "requests": resource_requests,
-                                    "limits": resource_limits,
-                                },
-                                "env": [
-                                    {
-                                        "name": "TASK_ID",
-                                        "value": task_id,
-                                    },
-                                    {
-                                        "name": "EXPECTED_SITE_ID",
-                                        "value": site_id,
-                                    },
-                                    {
-                                        "name": "NODE_NAME",
-                                        "valueFrom": {
-                                            "fieldRef": {
-                                                "fieldPath": "spec.nodeName",
-                                            }
-                                        },
-                                    },
-                                    {
-                                        "name": "POD_NAME",
-                                        "valueFrom": {
-                                            "fieldRef": {
-                                                "fieldPath": "metadata.name",
-                                            }
-                                        },
-                                    },
-                                ],
-                                "command": [
-                                    "sh",
-                                    "-c",
-                                    shell_command,
-                                ],
-                            }
-                        ],
-                    },
-                },
-            },
-        }
+        manifest = build_kubernetes_job_manifest(
+            namespace=self.namespace,
+            task_id=task_id,
+            site_id=site_id,
+            image=image,
+            shell_command=shell_command,
+            cpu_request=cpu_request,
+            memory_request=memory_request,
+            cpu_limit=cpu_limit,
+            memory_limit=memory_limit,
+            gpu_request=gpu_request,
+            gpu_resource_name=gpu_resource_name,
+            image_pull_policy=image_pull_policy,
+            node_name=node_name,
+            accelerator_product=accelerator_product,
+            accelerator_memory_mib=accelerator_memory_mib,
+            accelerator_interconnect=accelerator_interconnect,
+            accelerator_partition_mode=accelerator_partition_mode,
+        )
 
         completed = self._run(
             [
@@ -441,6 +567,12 @@ class KubernetesAdapter:
 
     def job_name_for_task(self, task_id: str) -> str:
         """Create a deterministic Kubernetes-compatible Job name."""
+
+        return self.job_name_for_task_value(task_id)
+
+    @staticmethod
+    def job_name_for_task_value(task_id: str) -> str:
+        """Create a deterministic Job name without an adapter instance."""
 
         normalized = re.sub(
             r"[^a-z0-9-]+",

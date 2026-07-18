@@ -26,6 +26,7 @@ from orchestrator.repositories.task_event_repository import (
     TaskEventRepository,
 )
 from orchestrator.services.kubernetes_joint_planner import (
+    KubernetesJointPlan,
     KubernetesJointPlanner,
     KubernetesJointPlannerError,
 )
@@ -86,6 +87,7 @@ class PersistentKubernetesRuntimeService:
         task: RuntimeTaskRequest,
         topology_file: str | Path,
         equipment_file: str | Path,
+        preselected_plan: KubernetesJointPlan | None = None,
     ) -> RuntimeSubmissionResult:
         """Plan resources, reserve spectrum and submit a Job."""
 
@@ -109,6 +111,14 @@ class PersistentKubernetesRuntimeService:
                 reused_existing=True,
             )
 
+        if (
+            preselected_plan is not None
+            and preselected_plan.task_id != task.task_id
+        ):
+            raise PersistentKubernetesRuntimeServiceError(
+                "Preselected plan task ID does not match the task."
+            )
+
         self.repository.create_task(task)
 
         self.repository.set_state(
@@ -117,11 +127,14 @@ class PersistentKubernetesRuntimeService:
         )
 
         try:
-            plan, _ = self.planner.select(
-                task=task,
-                topology_file=topology_file,
-                equipment_file=equipment_file,
-            )
+            if preselected_plan is None:
+                plan, _ = self.planner.select(
+                    task=task,
+                    topology_file=topology_file,
+                    equipment_file=equipment_file,
+                )
+            else:
+                plan = preselected_plan
         except KubernetesJointPlannerError as exc:
             blocked = self.repository.set_state(
                 task_id=task.task_id,
@@ -209,7 +222,23 @@ class PersistentKubernetesRuntimeService:
                             task.memory_limit_quantity
                         ),
                         gpu_request=task.gpu_request,
+                        gpu_resource_name=(
+                            task.accelerator_resource_name
+                        ),
                         image_pull_policy="Never",
+                        node_name=plan.selected_node_name,
+                        accelerator_product=(
+                            task.accelerator_product
+                        ),
+                        accelerator_memory_mib=(
+                            task.accelerator_memory_mib
+                        ),
+                        accelerator_interconnect=(
+                            task.accelerator_interconnect
+                        ),
+                        accelerator_partition_mode=(
+                            task.accelerator_partition_mode
+                        ),
                     )
                 )
 
@@ -319,14 +348,9 @@ class PersistentKubernetesRuntimeService:
                 )
             )
         except KubernetesAdapterError as exc:
-            self.repository.set_state(
-                task_id=task_id,
-                state=TaskState.FAILED,
-                failure_reason=str(exc),
-            )
-
             raise PersistentKubernetesRuntimeServiceError(
-                f"Failed while waiting for task {task_id}: {exc}"
+                f"Kubernetes status is temporarily unavailable for "
+                f"task {task_id}; reconciliation will retry: {exc}"
             ) from exc
 
         execution_phase = (
@@ -354,9 +378,16 @@ class PersistentKubernetesRuntimeService:
             == execution_record.requested_site_id
         )
 
+        node_matches = (
+            task_record.selected_node_name is None
+            or job_result.node_name
+            == task_record.selected_node_name
+        )
+
         success = (
             job_result.succeeded
             and site_matches
+            and node_matches
         )
 
         if success:
@@ -405,6 +436,13 @@ class PersistentKubernetesRuntimeService:
                     f"{execution_record.requested_site_id}, "
                     f"received "
                     f"{job_result.node_site_label}"
+                )
+
+            if not node_matches:
+                reasons.append(
+                    "Execution node mismatch: "
+                    f"expected {task_record.selected_node_name}, "
+                    f"received {job_result.node_name}"
                 )
 
             failure_reason = "; ".join(reasons)
@@ -500,7 +538,27 @@ class PersistentKubernetesRuntimeService:
                     gpu_request=(
                         task_record.task.gpu_request
                     ),
+                    gpu_resource_name=(
+                        task_record.task
+                        .accelerator_resource_name
+                    ),
                     image_pull_policy="Never",
+                    node_name=optical.node_name,
+                    accelerator_product=(
+                        task_record.task.accelerator_product
+                    ),
+                    accelerator_memory_mib=(
+                        task_record.task
+                        .accelerator_memory_mib
+                    ),
+                    accelerator_interconnect=(
+                        task_record.task
+                        .accelerator_interconnect
+                    ),
+                    accelerator_partition_mode=(
+                        task_record.task
+                        .accelerator_partition_mode
+                    ),
                 )
             )
 
@@ -773,7 +831,28 @@ class PersistentKubernetesRuntimeService:
                         gpu_request=(
                             task_record.task.gpu_request
                         ),
+                        gpu_resource_name=(
+                            task_record.task
+                            .accelerator_resource_name
+                        ),
                         image_pull_policy="Never",
+                        node_name=optical.node_name,
+                        accelerator_product=(
+                            task_record.task
+                            .accelerator_product
+                        ),
+                        accelerator_memory_mib=(
+                            task_record.task
+                            .accelerator_memory_mib
+                        ),
+                        accelerator_interconnect=(
+                            task_record.task
+                            .accelerator_interconnect
+                        ),
+                        accelerator_partition_mode=(
+                            task_record.task
+                            .accelerator_partition_mode
+                        ),
                     )
 
                 self.repository.save_job(

@@ -59,6 +59,7 @@ def candidate(
         available_cpu_m=11500,
         available_memory_mib=7000,
         available_gpu=0,
+        accelerators=(),
         spectrum_slot=slot,
         fiber_links=("fiber-a",) if feasible else (),
         route=("trx-a", "trx-b") if feasible else (),

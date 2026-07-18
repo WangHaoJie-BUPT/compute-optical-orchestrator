@@ -6,6 +6,79 @@ from dataclasses import dataclass
 from typing import Any
 
 
+ACCELERATOR_PRODUCT_LABEL = (
+    "accelerator.compute-optical.io/product"
+)
+ACCELERATOR_MEMORY_LABEL = (
+    "accelerator.compute-optical.io/memory-mib"
+)
+ACCELERATOR_INTERCONNECT_LABEL = (
+    "accelerator.compute-optical.io/interconnect"
+)
+ACCELERATOR_PARTITION_LABEL = (
+    "accelerator.compute-optical.io/partition-mode"
+)
+
+
+@dataclass(frozen=True)
+class AcceleratorInventory:
+    """One Kubernetes extended accelerator resource on a node."""
+
+    resource_name: str
+    allocatable: int
+    requested: int
+    available: int
+    product: str | None = None
+    memory_mib: int | None = None
+    interconnect: str | None = None
+    partition_mode: str | None = None
+
+    def matches(
+        self,
+        *,
+        count: int,
+        product: str | None = None,
+        minimum_memory_mib: int | None = None,
+        interconnect: str | None = None,
+        partition_mode: str | None = None,
+    ) -> bool:
+        if self.available < count:
+            return False
+        if product is not None and self.product != product:
+            return False
+        if (
+            minimum_memory_mib is not None
+            and (
+                self.memory_mib is None
+                or self.memory_mib < minimum_memory_mib
+            )
+        ):
+            return False
+        if (
+            interconnect is not None
+            and self.interconnect != interconnect
+        ):
+            return False
+        if (
+            partition_mode is not None
+            and self.partition_mode != partition_mode
+        ):
+            return False
+        return True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "resource_name": self.resource_name,
+            "allocatable": self.allocatable,
+            "requested": self.requested,
+            "available": self.available,
+            "product": self.product,
+            "memory_mib": self.memory_mib,
+            "interconnect": self.interconnect,
+            "partition_mode": self.partition_mode,
+        }
+
+
 @dataclass(frozen=True)
 class KubernetesSiteResources:
     """Real-time resource snapshot for one Kubernetes compute site."""
@@ -31,6 +104,7 @@ class KubernetesSiteResources:
     available_gpu: int
 
     active_pod_count: int
+    accelerators: tuple[AcceleratorInventory, ...] = ()
 
     @property
     def allocatable_cpu_cores(self) -> float:
@@ -61,16 +135,53 @@ class KubernetesSiteResources:
         cpu_m: int,
         memory_bytes: int,
         gpu: int = 0,
+        accelerator_resource_name: str = "nvidia.com/gpu",
+        accelerator_product: str | None = None,
+        accelerator_memory_mib: int | None = None,
+        accelerator_interconnect: str | None = None,
+        accelerator_partition_mode: str | None = None,
     ) -> bool:
         """Return whether the current Kubernetes snapshot can host a task."""
 
-        return (
+        base_resources_available = (
             self.ready
             and self.schedulable
             and self.available_cpu_m >= cpu_m
             and self.available_memory_bytes >= memory_bytes
-            and self.available_gpu >= gpu
         )
+        if not base_resources_available:
+            return False
+        if gpu == 0:
+            return True
+
+        inventory = self.accelerator_inventory(
+            accelerator_resource_name
+        )
+        return inventory is not None and inventory.matches(
+            count=gpu,
+            product=accelerator_product,
+            minimum_memory_mib=accelerator_memory_mib,
+            interconnect=accelerator_interconnect,
+            partition_mode=accelerator_partition_mode,
+        )
+
+    def accelerator_inventory(
+        self,
+        resource_name: str,
+    ) -> AcceleratorInventory | None:
+        for inventory in self.accelerators:
+            if inventory.resource_name == resource_name:
+                return inventory
+
+        # Preserve compatibility with snapshots built before v12.
+        if resource_name == "nvidia.com/gpu":
+            return AcceleratorInventory(
+                resource_name=resource_name,
+                allocatable=self.allocatable_gpu,
+                requested=self.requested_gpu,
+                available=self.available_gpu,
+            )
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the snapshot to a JSON-serializable dictionary."""
@@ -104,4 +215,8 @@ class KubernetesSiteResources:
                 "requested": self.requested_gpu,
                 "available": self.available_gpu,
             },
+            "accelerators": [
+                inventory.to_dict()
+                for inventory in self.accelerators
+            ],
         }

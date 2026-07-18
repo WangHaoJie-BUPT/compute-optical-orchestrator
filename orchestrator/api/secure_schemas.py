@@ -10,6 +10,8 @@ from pydantic import (
     Field,
 )
 
+from orchestrator.models.identifiers import TASK_ID_PATTERN
+
 
 class ProfileTaskSubmitRequest(BaseModel):
     """Safe submission payload without image or shell command."""
@@ -19,6 +21,7 @@ class ProfileTaskSubmitRequest(BaseModel):
     task_id: str = Field(
         min_length=1,
         max_length=128,
+        pattern=TASK_ID_PATTERN,
     )
 
     profile_id: str = Field(
@@ -44,6 +47,31 @@ class ProfileTaskSubmitRequest(BaseModel):
     gpu_request: int = Field(
         default=0,
         ge=0,
+    )
+
+    accelerator_resource_name: str = Field(
+        default="nvidia.com/gpu",
+        min_length=3,
+        max_length=253,
+    )
+    accelerator_product: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
+    accelerator_memory_mib: int | None = Field(
+        default=None,
+        gt=0,
+    )
+    accelerator_interconnect: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+    )
+    accelerator_partition_mode: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
     )
 
     cpu_limit_m: int | None = Field(
@@ -80,6 +108,10 @@ class TaskProfileResponse(BaseModel):
     max_memory_request_mib: int
 
     max_gpu_request: int
+    allowed_accelerator_resource_names: list[str]
+    allowed_accelerator_products: list[str]
+    allowed_accelerator_interconnects: list[str]
+    allowed_accelerator_partition_modes: list[str]
 
     default_bandwidth_gbps: float
     max_bandwidth_gbps: float

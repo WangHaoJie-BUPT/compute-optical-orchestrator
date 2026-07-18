@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 from pathlib import Path
+from typing import Any
 
 from fastapi import (
     FastAPI,
@@ -20,6 +21,15 @@ from orchestrator.api.application import (
     create_app as create_base_app,
     get_context,
 )
+from orchestrator.api.admission_schemas import (
+    AdmissionBatchResponse,
+    AdmissionEnqueueResponse,
+    AdmissionEventResponse,
+    AdmissionQueueStatsResponse,
+    AdmissionTaskListResponse,
+    AdmissionTaskResponse,
+    QueuedProfileTaskSubmitRequest,
+)
 from orchestrator.api.schemas import (
     TaskCancellationResponse,
     TaskSubmissionResponse,
@@ -32,12 +42,19 @@ from orchestrator.api.secure_schemas import (
     TaskProfileResponse,
 )
 from orchestrator.models.task_profile import TaskProfileError
+from orchestrator.models.admission import (
+    AdmissionRecord,
+    AdmissionState,
+)
 from orchestrator.observability.prometheus_metrics import (
     install_prometheus_metrics,
 )
 from orchestrator.models.task_state import TaskState
 from orchestrator.repositories.runtime_task_repository import (
     RuntimeTaskRepositoryError,
+)
+from orchestrator.repositories.admission_queue_repository import (
+    AdmissionQueueRepositoryError,
 )
 from orchestrator.services.persistent_kubernetes_runtime_service import (
     PersistentKubernetesRuntimeServiceError,
@@ -46,6 +63,25 @@ from orchestrator.services.task_profile_registry import (
     TaskProfileRegistry,
     TaskProfileRegistryError,
 )
+
+
+def admission_task_response(
+    record: AdmissionRecord,
+) -> AdmissionTaskResponse:
+    return AdmissionTaskResponse(
+        task_id=record.task.task_id,
+        tenant_id=record.tenant_id,
+        priority=record.priority,
+        state=record.state.value,
+        attempt_count=record.attempt_count,
+        not_before=record.not_before,
+        claimed_by=record.claimed_by,
+        runtime_state=record.runtime_state,
+        last_error=record.last_error,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        admitted_at=record.admitted_at,
+    )
 
 
 def create_secure_app(
@@ -82,6 +118,7 @@ def create_secure_app(
         protected = (
             path.startswith("/api/v1/")
             or path.startswith("/api/v2/")
+            or path.startswith("/api/v3/")
         )
 
         if protected:
@@ -129,6 +166,33 @@ def create_secure_app(
 
         return await call_next(request)
 
+    def build_profile_task(payload: Any):
+        profile = registry.get(payload.profile_id)
+        return profile.build_task(
+            task_id=payload.task_id,
+            source_access_node=payload.source_access_node,
+            cpu_request_m=payload.cpu_request_m,
+            memory_request_mib=payload.memory_request_mib,
+            gpu_request=payload.gpu_request,
+            cpu_limit_m=payload.cpu_limit_m,
+            memory_limit_mib=payload.memory_limit_mib,
+            bandwidth_gbps=payload.bandwidth_gbps,
+            duration_seconds=payload.duration_seconds,
+            accelerator_resource_name=(
+                payload.accelerator_resource_name
+            ),
+            accelerator_product=payload.accelerator_product,
+            accelerator_memory_mib=(
+                payload.accelerator_memory_mib
+            ),
+            accelerator_interconnect=(
+                payload.accelerator_interconnect
+            ),
+            accelerator_partition_mode=(
+                payload.accelerator_partition_mode
+            ),
+        )
+
     @app.get(
         "/api/v2/task-profiles",
         response_model=TaskProfileListResponse,
@@ -158,6 +222,18 @@ def create_secure_app(
                     max_gpu_request=(
                         profile.max_gpu_request
                     ),
+                    allowed_accelerator_resource_names=list(
+                        profile.allowed_accelerator_resource_names
+                    ),
+                    allowed_accelerator_products=list(
+                        profile.allowed_accelerator_products
+                    ),
+                    allowed_accelerator_interconnects=list(
+                        profile.allowed_accelerator_interconnects
+                    ),
+                    allowed_accelerator_partition_modes=list(
+                        profile.allowed_accelerator_partition_modes
+                    ),
                     default_bandwidth_gbps=(
                         profile.default_bandwidth_gbps
                     ),
@@ -177,6 +253,187 @@ def create_secure_app(
                 for profile in profiles
             ],
         )
+
+    @app.post(
+        "/api/v3/tasks",
+        response_model=AdmissionEnqueueResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+        tags=["admission queue"],
+    )
+    def enqueue_profile_task(
+        payload: QueuedProfileTaskSubmitRequest,
+        request: Request,
+    ) -> AdmissionEnqueueResponse:
+        context = get_context(request)
+        try:
+            task = build_profile_task(payload)
+        except (
+            TaskProfileError,
+            TaskProfileRegistryError,
+        ) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        try:
+            record, reused = context.admission_repository.enqueue(
+                task=task,
+                tenant_id=payload.tenant_id,
+                priority=payload.priority,
+                max_active_total=(
+                    context.settings.admission_max_active_total
+                ),
+                max_active_per_tenant=(
+                    context.settings
+                    .admission_max_active_per_tenant
+                ),
+            )
+        except AdmissionQueueRepositoryError as exc:
+            message = str(exc)
+            response_status = (
+                status.HTTP_429_TOO_MANY_REQUESTS
+                if (
+                    "capacity is exhausted" in message
+                    or "queue limit is exhausted" in message
+                )
+                else status.HTTP_409_CONFLICT
+            )
+            raise HTTPException(
+                status_code=response_status,
+                detail=message,
+            ) from exc
+
+        response = admission_task_response(record)
+        return AdmissionEnqueueResponse(
+            **response.model_dump(),
+            reused_existing=reused,
+        )
+
+    @app.get(
+        "/api/v3/queue/stats",
+        response_model=AdmissionQueueStatsResponse,
+        tags=["admission queue"],
+    )
+    def admission_queue_stats(
+        request: Request,
+    ) -> AdmissionQueueStatsResponse:
+        stats = get_context(request).admission_repository.stats()
+        return AdmissionQueueStatsResponse(
+            queued=stats.queued,
+            dispatching=stats.dispatching,
+            active=stats.active,
+            admitted=stats.admitted,
+            rejected=stats.rejected,
+            cancelled=stats.cancelled,
+        )
+
+    @app.get(
+        "/api/v3/queue",
+        response_model=AdmissionTaskListResponse,
+        tags=["admission queue"],
+    )
+    def list_admission_queue(
+        request: Request,
+        state_filter: str | None = Query(
+            default=None,
+            alias="state",
+        ),
+    ) -> AdmissionTaskListResponse:
+        states = None
+        if state_filter is not None:
+            try:
+                states = [AdmissionState(state_filter.upper())]
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Unknown admission state: "
+                        f"{state_filter}"
+                    ),
+                ) from exc
+        records = get_context(request).admission_repository.list(
+            states
+        )
+        return AdmissionTaskListResponse(
+            count=len(records),
+            tasks=[
+                admission_task_response(record)
+                for record in records
+            ],
+        )
+
+    @app.post(
+        "/api/v3/queue/dispatch",
+        response_model=AdmissionBatchResponse,
+        tags=["admission queue"],
+    )
+    def dispatch_admission_queue(
+        request: Request,
+    ) -> AdmissionBatchResponse:
+        context = get_context(request)
+        with context.operation_lock:
+            result = context.admission_controller.run_once()
+        return AdmissionBatchResponse(
+            controller_id=result.controller_id,
+            lease_acquired=result.lease_acquired,
+            claimed_count=result.claimed_count,
+            admitted_count=result.admitted_count,
+            requeued_count=result.requeued_count,
+            rejected_count=result.rejected_count,
+            events=[
+                AdmissionEventResponse(
+                    task_id=event.task_id,
+                    tenant_id=event.tenant_id,
+                    priority=event.priority,
+                    attempt_count=event.attempt_count,
+                    action=event.action,
+                    final_state=event.final_state,
+                    error=event.error,
+                )
+                for event in result.events
+            ],
+        )
+
+    @app.get(
+        "/api/v3/queue/{task_id}",
+        response_model=AdmissionTaskResponse,
+        tags=["admission queue"],
+    )
+    def get_admission_task(
+        task_id: str,
+        request: Request,
+    ) -> AdmissionTaskResponse:
+        record = get_context(request).admission_repository.get(
+            task_id
+        )
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Queued task does not exist: {task_id}",
+            )
+        return admission_task_response(record)
+
+    @app.post(
+        "/api/v3/queue/{task_id}/cancel",
+        response_model=AdmissionTaskResponse,
+        tags=["admission queue"],
+    )
+    def cancel_admission_task(
+        task_id: str,
+        request: Request,
+    ) -> AdmissionTaskResponse:
+        try:
+            record = (
+                get_context(request)
+                .admission_repository.cancel(task_id)
+            )
+        except AdmissionQueueRepositoryError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        return admission_task_response(record)
 
     @app.post(
         "/api/v2/tasks",
@@ -212,6 +469,21 @@ def create_secure_app(
                 ),
                 duration_seconds=(
                     payload.duration_seconds
+                ),
+                accelerator_resource_name=(
+                    payload.accelerator_resource_name
+                ),
+                accelerator_product=(
+                    payload.accelerator_product
+                ),
+                accelerator_memory_mib=(
+                    payload.accelerator_memory_mib
+                ),
+                accelerator_interconnect=(
+                    payload.accelerator_interconnect
+                ),
+                accelerator_partition_mode=(
+                    payload.accelerator_partition_mode
                 ),
             )
 
@@ -285,6 +557,7 @@ def create_secure_app(
         return TaskSubmissionResponse(
             task_id=result.task_record.task.task_id,
             state=result.task_record.state.value,
+            version=result.task_record.version,
             selected_site_id=(
                 result.task_record.selected_site_id
             ),
@@ -552,6 +825,7 @@ def create_secure_app(
             if not (
                 path.startswith("/api/v1/")
                 or path.startswith("/api/v2/")
+                or path.startswith("/api/v3/")
             ):
                 continue
 

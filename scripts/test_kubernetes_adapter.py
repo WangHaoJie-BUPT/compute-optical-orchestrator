@@ -17,6 +17,7 @@ from orchestrator.adapters.kubernetes_adapter import (  # noqa: E402
 
 TASK_ID = "k8s-adapter-task-001"
 SITE_ID = "site-rennes"
+NODE_NAME = "compute-optical-worker2"
 
 
 def main() -> None:
@@ -65,6 +66,7 @@ echo "Task completed"
         memory_request="32Mi",
         cpu_limit="200m",
         memory_limit="64Mi",
+        node_name=NODE_NAME,
     )
 
     print(f"[CREATED] {job_name}")
@@ -109,7 +111,7 @@ echo "Task completed"
             f"received {result.node_site_label}."
         )
 
-    if result.node_name != "compute-optical-worker2":
+    if result.node_name != NODE_NAME:
         raise AssertionError(
             "The Job was not scheduled to the expected Rennes node."
         )

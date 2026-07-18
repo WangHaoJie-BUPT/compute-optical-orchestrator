@@ -23,6 +23,14 @@
       "max_memory_limit_mib": 4096,
 
       "max_gpu_request": 0,
+      "allowed_accelerator_resource_names": [
+        "nvidia.com/gpu",
+        "huawei.com/Ascend910",
+        "amd.com/gpu"
+      ],
+      "allowed_accelerator_products": [],
+      "allowed_accelerator_interconnects": [],
+      "allowed_accelerator_partition_modes": [],
 
       "default_bandwidth_gbps": 100,
       "max_bandwidth_gbps": 400,
