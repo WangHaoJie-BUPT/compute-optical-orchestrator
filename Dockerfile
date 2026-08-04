@@ -1,3 +1,16 @@
+FROM node:24-bookworm-slim AS console-builder
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+
+RUN npm ci
+
+COPY frontend/ ./
+
+RUN npm test \
+    && npm run build
+
 FROM python:3.10-slim-bookworm
 
 ARG KUBECTL_VERSION=v1.35.5
@@ -50,6 +63,10 @@ RUN PBR_VERSION=2.14.1.dev5 python -m pip install \
     && python -c "import gnpy.yang.precision_dict"
 
 COPY . /app
+
+COPY --from=console-builder \
+  /frontend/dist \
+  /app/frontend/dist
 
 RUN chmod +x /app/scripts/container_entrypoint.sh \
     && mkdir -p /data \

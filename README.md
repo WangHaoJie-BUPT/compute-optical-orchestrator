@@ -146,6 +146,37 @@ and durable-admission workloads, prints Kubernetes and Prometheus evidence, and
 requests idempotent cleanup. See the demo runbook for expected evidence and
 recording precautions.
 
+## Operations console
+
+The browser console presents system health, compute-site capacity, persisted
+tasks, joint compute/optical decisions, spectrum occupancy, admission state,
+and profile-controlled submission in one operational view.
+
+The default replay mode is self-contained and deterministic, so the interface
+can be demonstrated without a Kubernetes cluster or API credentials:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173/console/`. To use live mode, start the FastAPI
+service on `http://127.0.0.1:8000`, choose **Live** in the console, and enter
+the configured API key. The key is kept only in page memory and is never
+written to browser storage.
+
+Production images build the console and serve it from `/console/` alongside
+the API. The root path redirects to that location when the compiled frontend
+is present. Build and verify the standalone frontend with:
+
+```bash
+cd frontend
+npm test
+npm run typecheck
+npm run build
+```
+
 ## API surface
 
 | Method and path | Purpose |

@@ -62,6 +62,22 @@ Their transitive dependencies retain their own upstream terms.
 | httpx2 | 2.5.0 | BSD 3-Clause | https://github.com/pydantic/httpx2 |
 | kubectl | 1.35.5 | Apache-2.0 | https://github.com/kubernetes/kubernetes |
 
+## Operations console dependencies
+
+The browser console installs, but does not modify, the following direct
+dependencies. Their transitive dependencies retain their own upstream terms.
+
+| Component | Version | License | Source |
+| --- | --- | --- | --- |
+| React | 19.2.8 | MIT | https://github.com/facebook/react |
+| React DOM | 19.2.8 | MIT | https://github.com/facebook/react |
+| React Flow (XYFlow) | 12.11.2 | MIT | https://github.com/xyflow/xyflow |
+| Recharts | 3.10.1 | MIT | https://github.com/recharts/recharts |
+| Lucide React | 1.28.0 | ISC | https://github.com/lucide-icons/lucide |
+| Vite | 8.2.0 | MIT | https://github.com/vitejs/vite |
+| TypeScript | 7.0.2 | Apache-2.0 | https://github.com/microsoft/TypeScript |
+| Vitest | 4.1.10 | MIT | https://github.com/vitest-dev/vitest |
+
 The reference manifests also use external container images. Those images are
 not stored in this repository and remain subject to the licenses published by
 their respective distributors.
