@@ -21,3 +21,6 @@ third_party/oopt-gnpy/.git
 
 deploy/observability
 *.log
+frontend/node_modules
+frontend/dist
+frontend/*.tsbuildinfo

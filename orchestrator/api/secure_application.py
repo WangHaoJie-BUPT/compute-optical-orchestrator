@@ -41,6 +41,7 @@ from orchestrator.api.secure_schemas import (
     TaskProfileListResponse,
     TaskProfileResponse,
 )
+from orchestrator.api.console import mount_console
 from orchestrator.models.task_profile import TaskProfileError
 from orchestrator.models.admission import (
     AdmissionRecord,
@@ -785,6 +786,10 @@ def create_secure_app(
         )
 
     install_prometheus_metrics(app)
+    mount_console(
+        app,
+        settings.project_root / "frontend" / "dist",
+    )
 
     def custom_openapi():
         if app.openapi_schema is not None:

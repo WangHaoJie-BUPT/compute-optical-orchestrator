@@ -8,3 +8,7 @@ requests/generated/
 runtime/
 runtime/*.env
 *.bak
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/*.log
