@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT=/home/wanghaojie/projects/compute-optical-orchestrator
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 NAMESPACE=orchestrator-system
 DEPLOYMENT=compute-optical-orchestrator
 PVC=compute-optical-orchestrator-data

@@ -2,8 +2,13 @@
 
 ## Supported versions
 
-No production-supported release exists yet. Security fixes apply to the
-current default branch until a public release policy is defined.
+No production-supported release exists. Security fixes are applied to the
+current default branch and the latest `v0.1.x` research release.
+
+| Version | Security updates |
+| --- | --- |
+| `0.1.x` | Yes |
+| Earlier development snapshots | No |
 
 ## Reporting a vulnerability
 

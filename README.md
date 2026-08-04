@@ -1,13 +1,16 @@
 # Compute-Optical Orchestrator
 
+[![CI](https://github.com/bupt20220407/compute-optical-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/bupt20220407/compute-optical-orchestrator/actions/workflows/ci.yml)
+
 Compute-Optical Orchestrator is a reproducible engineering research prototype
 that jointly selects Kubernetes compute capacity and an optical path/spectrum
 allocation before launching a workload as a Kubernetes Job.
 
-> **Status:** Private pre-release engineering prototype. The repository is
-> intentionally kept private while code ownership and licensing are reviewed.
-> Internal milestones such as v8-v13 are development labels; the first reviewed
-> external release is intended to be `v0.1.0`.
+> **Status:** `v0.1.0` engineering research prototype. Internal milestones such
+> as v8-v13 are development labels rather than public releases. The checked-in
+> evidence uses modeled optical topologies, synthetic workloads, and local kind
+> clusters; it does not establish physical-system performance or production
+> readiness.
 
 The project focuses on orchestration correctness: deterministic submission,
 failure compensation, restart recovery, reconciliation, audit events, and
@@ -246,8 +249,7 @@ NUMA/NVLink fabric-level placement remain separate follow-on work.
 
 ## License and use
 
-No open-source license is granted at this pre-release stage. Unless a license
-file is added later, the code remains subject to the repository owner's rights
-and any applicable university, laboratory, dataset, model, and dependency
-terms. Confirm ownership and third-party obligations before making the
-repository public or creating the `v0.1.0` release.
+Project-authored code is released under the [Apache License 2.0](LICENSE).
+Third-party dependencies, the GNPy submodule, and adapted example topology
+material retain their upstream terms as documented in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

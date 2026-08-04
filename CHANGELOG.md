@@ -1,9 +1,11 @@
 # Changelog
 
 All notable changes to this project will be documented in this file. The
-project intends to use Semantic Versioning after the first public release.
+project uses Semantic Versioning for public releases.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-08-04
 
 ### Added
 
@@ -30,8 +32,10 @@ project intends to use Semantic Versioning after the first public release.
   images or shell commands.
 - API-key authentication covers operational task and queue endpoints.
 
-## Public release naming
+## Development naming
 
-The first reviewed public release should be tagged `v0.1.0`. Internal labels
-such as v8-v13 describe development milestones and should not become a public
-version history.
+Internal labels such as v8-v13 describe development milestones and are not
+part of the public version history.
+
+[Unreleased]: https://github.com/bupt20220407/compute-optical-orchestrator/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/bupt20220407/compute-optical-orchestrator/releases/tag/v0.1.0
