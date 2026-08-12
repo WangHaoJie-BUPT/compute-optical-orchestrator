@@ -6,7 +6,7 @@ Compute-Optical Orchestrator is a reproducible engineering research prototype
 that jointly selects Kubernetes compute capacity and an optical path/spectrum
 allocation before launching a workload as a Kubernetes Job.
 
-> **Status:** `v0.1.0` engineering research prototype. Internal milestones such
+> **Status:** `v0.1.x` engineering research prototype. Internal milestones such
 > as v8-v13 are development labels rather than public releases. The checked-in
 > evidence uses modeled optical topologies, synthetic workloads, and local kind
 > clusters; it does not establish physical-system performance or production
@@ -165,6 +165,24 @@ Open `http://127.0.0.1:5173/console/`. To use live mode, start the FastAPI
 service on `http://127.0.0.1:8000`, choose **Live** in the console, and enter
 the configured API key. The key is kept only in page memory and is never
 written to browser storage.
+
+### Two-minute demonstration
+
+1. Start in **Replay** mode and use the overview to establish controller
+   health, three-site compute capacity, active tasks, and spectrum occupancy.
+2. Open a task to connect the selected Kubernetes node with its optical path,
+   explicit `N/M` spectrum allocation, QoT evidence, and lifecycle events.
+3. Inspect the admission view to explain durable queue state, tenant rotation,
+   priority aging, retry/backoff, and backpressure without requiring a cluster.
+4. Return to the spectrum view and compare shared-link slot claims to show why
+   concurrent plans cannot commit the same fiber-link/slot-index pair.
+5. If a local kind environment is available, switch to **Live**, provide the
+   in-memory API key, submit a server-controlled task profile, and follow the
+   same evidence through completion and idempotent cleanup.
+
+The Replay path is the recommended interview demonstration because it is
+deterministic and has no cluster, credential, or network dependency. Use Live
+mode only after the reference environment has been preflighted.
 
 Production images build the console and serve it from `/console/` alongside
 the API. The root path redirects to that location when the compiled frontend
